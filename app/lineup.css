@@ -1,0 +1,31 @@
+/* Match-order controls. Loaded after globals.css so these win on source order. */
+.player-row{grid-template-columns:34px 1fr auto auto}
+@media(max-width:760px){.player-row{grid-template-columns:34px 1fr auto}}
+
+.order-cell{display:grid;justify-items:center;align-content:center;gap:1px;cursor:grab}
+.order-cell:active{cursor:grabbing}
+.order-cell b{color:var(--muted);font-size:11px;font-weight:800;line-height:1}
+.order-cell button{display:grid;place-items:center;width:24px;height:14px;padding:0;color:var(--muted);background:#202722;border:1px solid #3b4741;border-radius:4px}
+.order-cell button:hover:not(:disabled){color:var(--lime);border-color:var(--lime)}
+.order-cell button:disabled{opacity:.28;cursor:default}
+.order-cell button svg{width:10px;height:10px}
+
+.player-row.dragging{opacity:.45}
+.player-row.drag-over{background:#1b241e;box-shadow:inset 0 2px 0 var(--lime)}
+
+.roster-hint{margin:0 14px 12px;color:var(--muted);font-size:10px;line-height:1.4}
+
+.lineup-sync{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* captain assignment (owner dashboard) */
+.captain-admin .captain-form{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;margin:14px 0}
+.captain-admin .captain-form input{padding:11px;color:var(--ink);background:#0b0f0d;border:1px solid #3b4740;border-radius:9px}
+.captain-admin .captain-form button{display:flex;align-items:center;gap:6px;padding:11px 15px;color:#081009;background:var(--lime);border:0;border-radius:9px;font-size:12px;font-weight:900;white-space:nowrap}
+.captain-admin .captain-form button:disabled{opacity:.5;cursor:not-allowed}
+.captain-admin .captain-form button svg{width:14px;height:14px}
+.captain-list{display:grid;gap:8px}
+.captain-list article{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;background:#0f1412;border:1px solid #2b332f;border-radius:10px}
+.captain-list article strong{font-size:13px}
+.captain-list article p{margin:2px 0 0;color:var(--muted);font-size:11px}
+.captain-list article button{padding:7px 12px;color:#e6cdbb;background:#2a1f16;border:1px solid #4a3524;border-radius:7px;font-size:11px;font-weight:800}
+@media(max-width:700px){.captain-admin .captain-form{grid-template-columns:1fr}}

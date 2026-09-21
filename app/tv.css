@@ -1,0 +1,63 @@
+/*
+ * Bar-screen styles. Sized in vw so the same page is legible on a 32" screen
+ * behind the bar and on a laptop the director has propped up, without anyone
+ * having to pick a resolution. Everything is high contrast: bar lighting is bad
+ * and the screen is usually being read from fifteen feet away at an angle.
+ */
+
+.tv-shell{min-height:100vh;display:flex;flex-direction:column;gap:clamp(12px,1.4vw,26px);padding:clamp(16px,2vw,40px);background:radial-gradient(circle at 75% -10%,#1d3126 0,transparent 40%),#070a09;color:var(--ink)}
+
+.tv-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;padding-bottom:clamp(10px,1vw,18px);border-bottom:2px solid var(--line)}
+.tv-eyebrow{margin:0;color:var(--lime);font-size:clamp(11px,1.05vw,20px);font-weight:900;letter-spacing:.14em;text-transform:uppercase}
+.tv-top h1{margin:2px 0 0;font-size:clamp(28px,4.2vw,76px);line-height:1.02;letter-spacing:-.03em}
+.tv-meta{display:flex;align-items:center;gap:clamp(8px,.9vw,18px);flex-wrap:wrap}
+.tv-race{padding:clamp(5px,.5vw,10px) clamp(9px,.9vw,18px);color:#081009;background:var(--lime);border-radius:999px;font-size:clamp(11px,1.05vw,20px);font-weight:900;letter-spacing:.06em}
+.tv-live{display:inline-flex;align-items:center;gap:7px;color:var(--green);font-size:clamp(11px,1.05vw,20px);font-weight:900;letter-spacing:.08em}
+.tv-live.stale{color:var(--orange)}
+.tv-live svg{width:1.1em;height:1.1em}
+.tv-clock{color:var(--muted);font-size:clamp(13px,1.3vw,26px);font-weight:800;font-variant-numeric:tabular-nums}
+
+.tv-champion{display:flex;align-items:center;gap:clamp(12px,1.4vw,26px);padding:clamp(14px,1.6vw,32px) clamp(16px,2vw,40px);background:linear-gradient(90deg,#33460f,#111714);border:2px solid var(--lime);border-radius:clamp(12px,1.2vw,22px)}
+.tv-champion svg{width:clamp(30px,3.4vw,64px);height:clamp(30px,3.4vw,64px);color:var(--lime);flex:none}
+.tv-champion span{display:block;color:var(--lime);font-size:clamp(11px,1.05vw,20px);font-weight:900;letter-spacing:.14em}
+.tv-champion strong{font-size:clamp(30px,4.6vw,84px);line-height:1.04;letter-spacing:-.02em}
+
+.tv-body{flex:1;display:grid;grid-template-columns:1.7fr 1fr;gap:clamp(12px,1.4vw,28px);min-height:0}
+.tv-now,.tv-standings{display:flex;flex-direction:column;min-height:0;padding:clamp(14px,1.5vw,30px);background:#101614;border:1px solid var(--line);border-radius:clamp(12px,1.2vw,22px)}
+.tv-now h2,.tv-standings h2{margin:0 0 clamp(10px,1vw,20px);color:var(--muted);font-size:clamp(12px,1.15vw,22px);font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+
+.tv-matches{display:grid;gap:clamp(9px,.9vw,18px);overflow:hidden}
+.tv-matches article{padding:clamp(10px,1.1vw,22px) clamp(12px,1.3vw,26px);background:#0a0f0d;border:1px solid #2b332f;border-radius:clamp(9px,.9vw,16px)}
+.tv-matches article.done{opacity:.62}
+.tv-table{display:block;margin-bottom:4px;color:var(--lime);font-size:clamp(10px,.95vw,18px);font-weight:900;letter-spacing:.12em}
+.tv-pair{display:flex;align-items:baseline;gap:clamp(8px,1vw,20px);flex-wrap:wrap}
+.tv-pair strong{font-size:clamp(20px,2.7vw,50px);line-height:1.1;letter-spacing:-.02em}
+.tv-pair strong.won{color:var(--lime)}
+.tv-pair em{color:var(--muted);font-style:normal;font-size:clamp(12px,1.2vw,24px);font-weight:800}
+
+.tv-table-rows{display:grid;gap:clamp(5px,.5vw,10px);overflow:hidden}
+.tv-table-rows div{display:grid;grid-template-columns:clamp(24px,2.2vw,44px) 1fr auto auto;align-items:baseline;gap:clamp(7px,.8vw,16px);padding:clamp(6px,.6vw,12px) clamp(8px,.8vw,16px);background:#0a0f0d;border-radius:clamp(7px,.7vw,13px)}
+.tv-table-rows div.out{opacity:.35}
+.tv-table-rows div.out strong{text-decoration:line-through}
+.tv-table-rows span{color:var(--muted);font-size:clamp(12px,1.15vw,22px);font-weight:900}
+.tv-table-rows strong{font-size:clamp(15px,1.7vw,32px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tv-table-rows b{color:var(--lime);font-size:clamp(16px,1.8vw,34px);font-variant-numeric:tabular-nums}
+.tv-table-rows small{color:var(--muted);font-size:clamp(12px,1.2vw,23px);font-variant-numeric:tabular-nums}
+
+.tv-waiting{margin:0;color:var(--muted);font-size:clamp(15px,1.7vw,32px)}
+
+.tv-foot{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:clamp(11px,1.05vw,20px);font-weight:700}
+
+.tv-idle{flex:1;display:grid;place-content:center;justify-items:center;gap:clamp(8px,.9vw,18px);text-align:center}
+.tv-idle svg{width:clamp(44px,5vw,96px);height:clamp(44px,5vw,96px);color:var(--lime)}
+.tv-idle h1{margin:0;font-size:clamp(30px,4.4vw,80px);letter-spacing:-.03em}
+.tv-idle p{margin:0;color:var(--ink);font-size:clamp(16px,1.9vw,36px)}
+.tv-idle span{color:var(--muted);font-size:clamp(12px,1.2vw,23px)}
+
+/* One column on anything narrow: a phone held up at the table, or a vertical screen. */
+@media(max-width:900px){.tv-body{grid-template-columns:1fr}}
+
+/* presenter branding — big when idle, quiet while a match is on screen */
+.tv-idle p.tv-presents{margin:0;color:var(--lime);font-size:clamp(13px,1.5vw,28px);font-weight:900;letter-spacing:.2em;text-transform:uppercase}
+.tv-brand{margin:clamp(4px,.4vw,9px) 0 0;color:var(--muted);font-size:clamp(11px,1.05vw,20px);font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.tv-brand b{color:var(--lime)}

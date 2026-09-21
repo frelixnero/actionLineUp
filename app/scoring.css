@@ -1,0 +1,12 @@
+.league-tab-list{grid-template-columns:repeat(6,1fr)!important}
+.scoring-settings{padding:20px;background:#111513;border:1px solid var(--line);border-radius:15px}
+.scoring-settings h3{margin:0;font-size:21px}
+.scoring-settings>div>p:last-child{color:var(--muted);font-size:12px;line-height:1.5}
+.scoring-fields{margin-top:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.scoring-fields label{display:grid;gap:6px;color:#aab4af;font-size:10px;font-weight:800}
+.scoring-fields input,.scoring-fields select{width:100%;padding:10px;color:var(--ink);background:#1b211e;border:1px solid #3c4742;border-radius:8px;font:inherit}
+.scoring-preview{margin-top:16px;padding:14px;display:flex;align-items:center;gap:12px;background:#19231c;border:1px solid #38513f;border-radius:10px}
+.scoring-preview strong{color:var(--lime)}
+.scoring-preview span{flex:1;color:var(--muted);font-size:11px}
+.scoring-preview button{padding:10px 12px;color:#081009;background:var(--lime);border:0;border-radius:8px;font-weight:900}
+@media(max-width:760px){.league-tab-list{grid-template-columns:repeat(3,1fr)!important;height:auto!important}.scoring-fields{grid-template-columns:1fr}.scoring-preview{align-items:flex-start;flex-direction:column}.scoring-preview button{width:100%}}
