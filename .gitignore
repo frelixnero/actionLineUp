@@ -1,2 +1,9 @@
+node_modules/
+.next/
+dist/
+.vercel/
+.wrangler/
+*.tsbuildinfo
 .env
-.env*
+.env.*
+!.env.example
