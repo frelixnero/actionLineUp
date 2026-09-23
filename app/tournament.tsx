@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Cloud, CloudOff, Crown, Plus, RefreshCw, RotateCcw, Shuffle, Trophy, Tv, UserX, Users } from "lucide-react";
+import { Cloud, CloudOff, Crown, Plus, RefreshCw, RotateCcw, Shuffle, Sparkles, Trophy, Tv, UserX, Users } from "lucide-react";
 import { toast } from "sonner";
 import {
   FORMATS, formatByKey, buildSides, initialMatches, resolve, nextRound, standings, champion,
@@ -222,6 +222,31 @@ export default function TournamentDesk() {
     toast.success("Entrants reseeded.");
   };
 
+  const loadDemoTournament = () => {
+    const demoEntrants = [
+      { id: "e-demo-1", name: "Marcus Ray" },
+      { id: "e-demo-2", name: "Jake Torres" },
+      { id: "e-demo-3", name: "Carlos Vance" },
+      { id: "e-demo-4", name: "Elena Ramos" },
+      { id: "e-demo-5", name: "Devon Miller" },
+      { id: "e-demo-6", name: "Toby Morales" },
+      { id: "e-demo-7", name: "Brad Becker" },
+      { id: "e-demo-8", name: "Samira Patel" },
+    ];
+    const sides = buildSides(config, demoEntrants);
+    const matches = initialMatches(config, sides);
+    const withScores = resolve(config, matches.map((m, idx) => idx === 0 ? { ...m, winner: m.a } : idx === 1 ? { ...m, winner: m.b } : m));
+    setState(v => ({
+      ...v,
+      name: "Tuesday 8-Ball Shootout",
+      prizeNote: "$200 Bar Tab + Trophy to 1st Place",
+      entrants: demoEntrants,
+      sides,
+      matches: withScores,
+    }));
+    toast.success("Loaded 8-player demo tournament with active bracket!");
+  };
+
   const generate = async (force = false) => {
     if (!guard()) return;
     const min = config.teamSize === 2 ? 4 : 2;
@@ -335,6 +360,11 @@ export default function TournamentDesk() {
       <div><p className="eyebrow"><Trophy /> TOURNAMENT DESK</p><h2>Run the room</h2></div>
       <div className="tourney-toolbar-actions">
         <span className={`sync-pill ${shared ? "live" : ""}`}>{shared ? <Cloud /> : <CloudOff />}{shared ? "Shared" : "This device"}</span>
+        {!started && canEdit && (
+          <button className="quiet-button" onClick={loadDemoTournament} title="Load pre-built 8-player tournament bracket">
+            <Sparkles size={14}/> Demo bracket
+          </button>
+        )}
         {!shared && isOwner && started &&
           <button className="quiet-button" disabled={busy} onClick={publish}><Cloud /> Publish to league</button>}
         <a className="quiet-button" href="/tv" target="_blank" rel="noreferrer"><Tv /> Bar screen</a>

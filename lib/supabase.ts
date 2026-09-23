@@ -9,6 +9,9 @@ const required = (value: string | undefined, name: string) => {
   return value;
 };
 
+export const isSupabaseConfigured = () =>
+  Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+
 export const publicSupabase = () =>
   createClient(required(projectUrl, "NEXT_PUBLIC_SUPABASE_URL"), required(anonKey, "NEXT_PUBLIC_SUPABASE_ANON_KEY"));
 

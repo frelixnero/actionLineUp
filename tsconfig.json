@@ -39,13 +39,7 @@
   ],
   "exclude": [
     "node_modules",
-    "worker",
-    "build",
-    "db",
-    "examples",
     "components/ui",
-    "vite.config.ts",
-    "drizzle.config.ts",
-    "cloudflare-workers.d.ts"
+    ".next"
   ]
 }

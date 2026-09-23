@@ -29,7 +29,7 @@ export async function GET() {
     const db = adminSupabase();
     const { data: lineup, error } = await db
       .from("lineups")
-      .select("id, home_team, away_team, match_date, match_time, venue, scoring, updated_at")
+      .select("id, home_team, away_team, match_date, match_time, venue, scoring, home_confirmed, away_confirmed, submitted_at, updated_at")
       .eq("league_key", LEAGUE_KEY)
       .order("updated_at", { ascending: false })
       .limit(1)
@@ -59,6 +59,11 @@ export async function GET() {
         away: bySide("away"),
         matchInfo: { date: lineup.match_date ?? "", time: lineup.match_time ?? "", venue: lineup.venue ?? "" },
         scoring: lineup.scoring ?? {},
+        scoreSubmission: {
+          submittedAt: lineup.submitted_at ?? undefined,
+          homeConfirmed: Boolean(lineup.home_confirmed),
+          awayConfirmed: Boolean(lineup.away_confirmed),
+        },
         winners,
         updatedAt: lineup.updated_at,
       },
@@ -89,6 +94,7 @@ export async function PUT(request: Request) {
     const info = (body?.matchInfo ?? {}) as { date?: unknown; time?: unknown; venue?: unknown };
     const matchDate = cleanText(info.date, 10);
 
+    const sub = (body?.scoreSubmission ?? {}) as { submittedAt?: unknown; homeConfirmed?: unknown; awayConfirmed?: unknown };
     const payload = {
       league_key: LEAGUE_KEY,
       home_team: homeTeam,
@@ -98,6 +104,9 @@ export async function PUT(request: Request) {
       match_time: cleanText(info.time, 40) || null,
       venue: cleanText(info.venue, 160) || null,
       scoring: (body?.scoring && typeof body.scoring === "object") ? body.scoring : {},
+      home_confirmed: Boolean(sub.homeConfirmed),
+      away_confirmed: Boolean(sub.awayConfirmed),
+      submitted_at: typeof sub.submittedAt === "string" && sub.submittedAt ? sub.submittedAt : null,
       updated_by: permission.user.id,
     };
 

@@ -16,7 +16,7 @@ export async function captainTeams(user: CurrentUser): Promise<string[]> {
     .select("team_name")
     .eq("league_key", LEAGUE_KEY)
     .eq("profile_id", user.id);
-  return (data ?? []).map(row => row.team_name as string);
+  return (data ?? []).map((row: { team_name: string }) => row.team_name);
 }
 
 export type LineupPermission =

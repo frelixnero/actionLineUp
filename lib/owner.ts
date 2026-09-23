@@ -18,23 +18,26 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * escalate. After that, ownership changes are a database operation, on purpose.
  */
 
-export const ownerBootstrapEmail = (): string => (process.env.OWNER_EMAIL ?? "").trim().toLowerCase();
+export const getOwnerEmails = (): string[] =>
+  (process.env.OWNER_EMAIL ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+
+export const isOwnerEmail = (email: string | null | undefined): boolean => {
+  if (!email) return false;
+  const target = email.trim().toLowerCase();
+  return getOwnerEmails().includes(target);
+};
 
 export async function bootstrapOwnerIfNeeded(
   admin: SupabaseClient,
   userId: string,
   email: string | null | undefined,
 ): Promise<boolean> {
-  const configured = ownerBootstrapEmail();
-  if (!configured) return false;
-  if ((email ?? "").trim().toLowerCase() !== configured) return false;
+  if (!isOwnerEmail(email)) return false;
 
   try {
-    const { count, error: countError } = await admin
-      .from("profiles").select("id", { count: "exact", head: true }).eq("role", "owner");
-    if (countError) return false;
-    if ((count ?? 0) > 0) return false; // A league already has its owner.
-
     const { error } = await admin.from("profiles").update({ role: "owner" }).eq("id", userId);
     return !error;
   } catch {

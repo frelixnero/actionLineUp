@@ -6,7 +6,6 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "install:ci": "bash scripts/install-ci.sh",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
