@@ -169,6 +169,20 @@ export default function Home() {
     const d=await res.json();
     if(!res.ok){toast.error(d?.error??"Could not publish the lineup.");return;}
     setLineupId(d.id); toast.success("Lineup published. Both teams can see it.");
+    // If both teams confirmed and a winner is clearly decided, auto-update standings
+    try {
+      const bothConfirmed = Boolean(sub.homeConfirmed) && Boolean(sub.awayConfirmed);
+      if (bothConfirmed) {
+        // Determine match winner by counting recorded game winners (winners map)
+        const homeCount = Object.values(winners).filter(v => v === "home").length;
+        const awayCount = Object.values(winners).filter(v => v === "away").length;
+        if (homeCount !== awayCount) {
+          const winnerTeam = homeCount > awayCount ? homeTeam : awayTeam;
+          const loserTeam = homeCount > awayCount ? awayTeam : homeTeam;
+          await fetch("/api/standings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ winner: winnerTeam, loser: loserTeam }) });
+        }
+      }
+    } catch {}
   }catch{toast.error("Could not reach the league board.");}finally{setSyncBusy(false);}};
 
   const handleReportIssue = async (issue: LeagueIssue) => {
@@ -447,7 +461,7 @@ export default function Home() {
       </TabsContent>
 
       <TabsContent value="league" className="tab-panel">
-        <LeagueHub games={matchups} winners={winners} scoring={scoring} setScoring={setScoring} issues={issues} onReport={handleReportIssue} />
+        <LeagueHub games={matchups} winners={winners} scoring={scoring} setScoring={setScoring} issues={issues} onReport={handleReportIssue} currentUser={currentUser} homeTeam={homeTeam} awayTeam={awayTeam} homeWins={homeWins} awayWins={awayWins} />
       </TabsContent>
 
       <TabsContent value="payments" className="tab-panel">
@@ -671,12 +685,51 @@ function PoolMarket(){
   return <section className="pool-market"><div className="market-head"><div><p className="eyebrow">LOCAL BUY · SELL · TRADE</p><h2>Pool Market</h2><p>League members can list cues, cases, tables, accessories, and other local pool gear.</p></div><ShoppingBag/></div><section className="membership-grid"><article><span>FREE</span><strong>$0 <small>/ week</small></strong><p>Public standings, schedule, league guide, match results, and browsing local listings.</p><button onClick={()=>toast.info("Create a free account to follow the league.")}>{paidTier?"Included":"Choose Free"}</button></article><article><span>BASIC MEMBER</span><strong>$1.99 <small>/ week</small></strong><p>League access, scores, schedule, standings, local listing privileges, and monthly Skill Award eligibility.</p><button disabled={billingBusy||!billingOpen} onClick={()=>paidTier==="basic"?manageBilling():subscribe("basic")}>{!billingOpen?"Opening soon":paidTier==="basic"?"Manage membership":"Choose Basic"}</button></article><article className="featured-membership"><span>PREMIUM MEMBER</span><strong>$2.99 <small>/ week</small></strong><p>Everything in Basic, premium leaderboard access, and end-of-season prize eligibility.</p><button disabled={billingBusy||!billingOpen} onClick={()=>paidTier==="premium"?manageBilling():subscribe("premium")}>{!billingOpen?"Opening soon":paidTier==="premium"?"Manage membership":"Choose Premium"}</button></article></section><section className="awards-board"><div><p className="eyebrow">MONTHLY SKILL AWARDS</p><h3>Earn your spot</h3><p><strong>Every month, the top 3 most wins and top 3 underdog wins earn one free week of league dues.</strong></p><p>Basic and Premium members qualify for monthly awards. Premium members also qualify for the season prizes. Season payouts grow with the league length, so longer seasons build a bigger prize pool.</p></div><div><p className="eyebrow">END-OF-SEASON PRIZES · PREMIUM ONLY · APP OWNER FUNDED</p><span>Up to 3 months · <b>$150 / $100 / $50</b></span><span>4–5 months · <b>$200 / $125 / $75</b></span><span>6 months · <b>$300 / $200 / $100</b></span><span>7+ months · <b>$400 / $300 / $200 / $100 / $75 / $50</b></span><small>First place is capped at $400. Six places are paid only for seasons longer than six months.</small></div></section><div className="market-grid">{items.map(item=><article key={item.id}><span>LOCAL LISTING</span><h3>{item.title}</h3><strong>{item.price}</strong><p>{item.note}</p><button onClick={()=>toast.info("Ask the seller in person or through your league contact.")}>Ask seller</button></article>)}</div><section className="sell-form"><div><p className="eyebrow">POST AN ITEM · $1</p><h3>Up to 3 photos per listing</h3></div><input value={draft.title} onChange={e=>setDraft(v=>({...v,title:e.target.value}))} placeholder="Item name"/><input value={draft.price} onChange={e=>setDraft(v=>({...v,price:e.target.value}))} placeholder="Price"/><input value={draft.note} onChange={e=>setDraft(v=>({...v,note:e.target.value}))} placeholder="Condition or pickup note"/><button onClick={add}><Plus/> Start $1 listing</button></section><p className="market-note"><ShieldCheck/> Listings are local contact only. The league does not take marketplace payments or guarantee sales.</p></section>
 }
 
-function LeagueHub({games,winners,scoring,setScoring,issues,onReport}:{games:{id:string;home:Player;away:Player}[][];winners:Record<string,Winner>;scoring:{format:string;gamesPerMatch:number;matchWinAt:number;winPoints:number;lossPoints:number};setScoring:React.Dispatch<React.SetStateAction<{format:string;gamesPerMatch:number;matchWinAt:number;winPoints:number;lossPoints:number}>>;issues:LeagueIssue[];onReport:(issue:LeagueIssue)=>void}){
+type LeagueTeamState = { name: string; w: number; l: number; division: "American" | "National" };
+
+function LeagueHub({games,winners,scoring,setScoring,issues,onReport,currentUser,homeTeam,awayTeam,homeWins,awayWins}:{
+  games:{id:string;home:Player;away:Player}[][];
+  winners:Record<string,Winner>;
+  scoring:{format:string;gamesPerMatch:number;matchWinAt:number;winPoints:number;lossPoints:number};
+  setScoring:React.Dispatch<React.SetStateAction<{format:string;gamesPerMatch:number;matchWinAt:number;winPoints:number;lossPoints:number}>>;
+  issues:LeagueIssue[];
+  onReport:(issue:LeagueIssue)=>void;
+  currentUser:{id:string;username:string;role:"owner"|"player";email:string|null}|null;
+  homeTeam:string; awayTeam:string; homeWins:number; awayWins:number;
+}){
   const [query,setQuery]=useState("");
   const [leaderboardLimit,setLeaderboardLimit]=useState<5|10|20>(10);
   const [ranking,setRanking]=useState<"percentage"|"wins"|"power">("percentage");
   const [issueType,setIssueType]=useState("Score correction");
   const [issueDetails,setIssueDetails]=useState("");
+  const [teams, setTeams] = useState<LeagueTeamState[]>(leagueTeams);
+  const [editingTeam, setEditingTeam] = useState<string|null>(null);
+  const [savingStandings, setSavingStandings] = useState(false);
+  const isOwner = currentUser?.role === "owner";
+
+  // Load standings from the API on mount
+  useEffect(()=>{
+    fetch("/api/standings").then(r=>r.json()).then(d=>{
+      if(Array.isArray(d?.teams) && d.teams.length > 0) setTeams(d.teams);
+    }).catch(()=>{});
+  },[]);
+
+  const saveStandings = async (next: LeagueTeamState[]) => {
+    setSavingStandings(true);
+    try {
+      const res = await fetch("/api/standings", { method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ teams: next }) });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d?.error ?? "Could not save standings."); return; }
+      setTeams(next);
+      toast.success("Standings saved.");
+    } catch { toast.error("Could not reach the server."); }
+    finally { setSavingStandings(false); setEditingTeam(null); }
+  };
+
+  const updateTeamRecord = (name: string, field: "w"|"l", val: string) => {
+    setTeams(prev => prev.map(t => t.name === name ? {...t, [field]: Math.max(0, parseInt(val)||0)} : t));
+  };
+
   const qualified=statPlayers.filter(p=>p.w+p.l>=20&&!p.dropped).sort((a,b)=>b.w/(b.w+b.l)-a.w/(a.w+a.l));
   const power=(p:StatPlayer)=>Math.round((p.w/(p.w+p.l))*70+Math.min(20,(p.w+p.l)/3)+(p.eight||0)*3+(p.tr||0)*4);
   const ranked=[...qualified].sort((a,b)=>ranking==="wins"?b.w-a.w||a.l-b.l:ranking==="power"?power(b)-power(a):b.w/(b.w+b.l)-a.w/(a.w+a.l));
@@ -684,13 +737,13 @@ function LeagueHub({games,winners,scoring,setScoring,issues,onReport}:{games:{id
   const reportIssue=()=>{if(!issueDetails.trim()){toast.error("Tell the owner what needs attention.");return;}onReport({id:`issue-${Date.now()}`,type:issueType,details:issueDetails.trim(),createdAt:new Date().toISOString()});setIssueDetails("");toast.success("Your report was added to the owner review queue.");};
   return <div className="league-hq">
     <div className="league-banner">
-      <div><p className="eyebrow"><Sparkles/> ACTION INTELLIGENCE</p><h2>League Command Center</h2><p>{leagueTeams.length} teams &middot; {statPlayers.length} tracked players</p></div>
+      <div><p className="eyebrow"><Sparkles/> ACTION INTELLIGENCE</p><h2>League Command Center</h2><p>{teams.length} teams &middot; {statPlayers.length} tracked players</p></div>
       <div className="apex-badge"><Crown/><span>APEX MODE</span><strong>LIVE</strong></div>
     </div>
     <LeagueAnnouncements/>
     <div className="metric-grid">
-      <article><span>AMERICAN #1</span><strong>{leagueTeams.filter(t=>t.division==="American").sort((a,b)=>b.w-a.w)[0]?.name??"—"}</strong><small>No results yet</small></article>
-      <article><span>NATIONAL #1</span><strong>{leagueTeams.filter(t=>t.division==="National").sort((a,b)=>b.w-a.w)[0]?.name??"—"}</strong><small>No results yet</small></article>
+      <article><span>AMERICAN #1</span><strong>{teams.filter(t=>t.division==="American").sort((a,b)=>b.w-a.w)[0]?.name??"—"}</strong><small>Top American team</small></article>
+      <article><span>NATIONAL #1</span><strong>{teams.filter(t=>t.division==="National").sort((a,b)=>b.w-a.w)[0]?.name??"—"}</strong><small>Top National team</small></article>
       <article><span>PLAYER MVP</span><strong>{qualified[0]?.name??"—"}</strong><small>No qualified players</small></article>
       <article className="attention"><span>ACTION REQUIRED</span><strong>{issues.filter(i=>!i.resolved).length} score issues</strong><small>Missing or incomplete sheets</small></article>
     </div>
@@ -700,14 +753,26 @@ function LeagueHub({games,winners,scoring,setScoring,issues,onReport}:{games:{id
         <TabsTrigger value="standings">Standings</TabsTrigger><TabsTrigger value="players">Top players</TabsTrigger><TabsTrigger value="results">Results</TabsTrigger><TabsTrigger value="schedule">Calendar</TabsTrigger><TabsTrigger value="alerts">Commissioner</TabsTrigger><TabsTrigger value="scoring">Scoring setup</TabsTrigger>
       </TabsList>
       <TabsContent value="standings">
+        {isOwner && (
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0 16px",fontSize:13,color:"var(--lime)"}}>
+            <Edit2 size={13}/>
+            <span>Owner mode — click any W or L number to edit team records directly.</span>
+            {editingTeam && <button onClick={()=>saveStandings(teams)} disabled={savingStandings} style={{marginLeft:"auto",background:"var(--lime)",color:"#000",border:"none",borderRadius:6,padding:"4px 14px",fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>{savingStandings?<><Loader2 size={12} className="animate-spin"/> Saving…</>:<><Check size={12}/> Save standings</>}</button>}
+          </div>
+        )}
         <div className="division-grid">{(["American","National"] as const).map(div=><section className="data-card" key={div}>
-          <div className="data-title"><div><p className="eyebrow">{div.toUpperCase()}</p><h3>{div} Division</h3></div><span>{leagueTeams.filter(t=>t.division===div).length} teams</span></div>
+          <div className="data-title"><div><p className="eyebrow">{div.toUpperCase()}</p><h3>{div} Division</h3></div><span>{teams.filter(t=>t.division===div).length} teams</span></div>
           <div className="standing-head"><span>RK</span><span>TEAM</span><span>W</span><span>L</span><span>PCT</span></div>
-          {leagueTeams.filter(t=>t.division===div).sort((a,b)=>b.w-a.w||a.l-b.l).map((t,i)=><div className="standing-row" key={t.name}>
-            <span className={i<3?`rank rank-${i+1}`:"rank"}>{i+1}</span><strong>{t.name}</strong><b>{t.w}</b><span>{t.l}</span><span>{Math.round(t.w/(t.w+t.l)*100)}%</span>
-          </div>)}{leagueTeams.filter(t=>t.division===div).length===0&&<p className="leaderboard-empty">No teams in this division yet.</p>}</section>)}</div>
+          {teams.filter(t=>t.division===div).sort((a,b)=>b.w-a.w||a.l-b.l).map((t,i)=><div className="standing-row" key={t.name}>
+            <span className={i<3?`rank rank-${i+1}`:"rank"}>{i+1}</span><strong>{t.name}</strong>
+            {isOwner ? (<>
+              <b><input type="number" min={0} max={999} value={t.w} onFocus={()=>setEditingTeam(t.name)} onChange={e=>updateTeamRecord(t.name,"w",e.target.value)} style={{width:42,background:"rgba(174,234,67,.12)",border:"1px solid var(--lime)",borderRadius:4,color:"var(--lime)",fontWeight:700,textAlign:"center",fontSize:14,padding:"2px"}}/></b>
+              <span><input type="number" min={0} max={999} value={t.l} onFocus={()=>setEditingTeam(t.name)} onChange={e=>updateTeamRecord(t.name,"l",e.target.value)} style={{width:42,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.2)",borderRadius:4,color:"#ccc",textAlign:"center",fontSize:14,padding:"2px"}}/></span>
+            </>) : (<><b>{t.w}</b><span>{t.l}</span></>)}
+            <span>{t.w+t.l>0?Math.round(t.w/(t.w+t.l)*100):0}%</span>
+          </div>)}{teams.filter(t=>t.division===div).length===0&&<p className="leaderboard-empty">No teams in this division yet.</p>}</section>)}</div>
         <section className="power-card"><div><p className="eyebrow"><TrendingUp/> ACTION POWER RANKING</p><h3>Top team momentum</h3></div>
-          <div className="power-teams">{leagueTeams.length===0?<p className="formula">Power rankings appear once teams and results are entered.</p>:[...leagueTeams].sort((a,b)=>b.w/(b.w+b.l)-a.w/(a.w+a.l)).slice(0,4).map((t,i)=><div key={t.name}><span>{i+1}</span><strong>{t.name}</strong><small>{t.w}&ndash;{t.l}</small><b>{Math.round(t.w/(t.w+t.l)*100)}</b></div>)}</div>
+          <div className="power-teams">{teams.length===0?<p className="formula">Power rankings appear once teams and results are entered.</p>:[...teams].sort((a,b)=>(b.w/(b.w+b.l)||0)-(a.w/(a.w+a.l)||0)).slice(0,4).map((t,i)=><div key={t.name}><span>{i+1}</span><strong>{t.name}</strong><small>{t.w}&ndash;{t.l}</small><b>{t.w+t.l>0?Math.round(t.w/(t.w+t.l)*100):0}</b></div>)}</div>
           <p className="formula">Power Score blends team record, recent results, roster win rate, table runs and 8-ball breaks. It is an Action Line-Up rating—not an official league statistic.</p>
         </section>
       </TabsContent>

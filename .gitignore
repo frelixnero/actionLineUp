@@ -7,3 +7,7 @@ dist/
 .env
 .env.*
 !.env.example
+
+
+Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy RemoteSigned
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Restricted
