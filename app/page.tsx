@@ -550,7 +550,7 @@ function LandingPage({onLeague,onOwner,onAuthSuccess}:{onLeague:(name:string)=>v
       if(!response.ok){toast.error(result.error||"Could not sign in.");return;}
       toast.success(`Welcome back, ${result.username}.`);
       onAuthSuccess({ id: result.id || "", username: result.username, role: result.role });
-      result.role==="owner"?onOwner():onLeague("Seguin 8Ball League");
+      onLeague("Seguin 8Ball League");
     } catch {
       toast.error("Network error. Please try again.");
     } finally {
@@ -567,7 +567,7 @@ function LandingPage({onLeague,onOwner,onAuthSuccess}:{onLeague:(name:string)=>v
       if(!response.ok){toast.error(result.error||"Could not create your account.");return;}
       toast.success(`Account created for ${result.username}.`);
       onAuthSuccess({ id: result.id || "", username: result.username, role: result.role });
-      result.role==="owner"?onOwner():onLeague("Seguin 8Ball League");
+      onLeague("Seguin 8Ball League");
     } catch {
       toast.error("Network error. Please try again.");
     } finally {
