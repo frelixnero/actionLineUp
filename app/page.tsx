@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, BarChart3, Bell, BookOpen, CalendarDays, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Cloud, CloudOff, RefreshCw, CircleDollarSign, Clock, Crown, Edit2, FileText, HandHeart, LayoutDashboard, LogIn, MapPin, Medal, MessageCircle, Play, Plus, QrCode, RotateCcw, Search, Send, Share2, ShieldCheck, ShoppingBag, Sparkles, ThumbsDown, ThumbsUp, Trophy, TrendingUp, Tv, Users, WalletCards } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { AlertTriangle, BarChart3, Bell, BookOpen, CalendarDays, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Cloud, CloudOff, RefreshCw, CircleDollarSign, Clock, Crown, Edit2, FileText, HandHeart, LayoutDashboard, Loader2, LogIn, MapPin, Medal, MessageCircle, Play, Plus, QrCode, RotateCcw, Search, Send, Share2, ShieldCheck, ShoppingBag, Sparkles, ThumbsDown, ThumbsUp, Trophy, TrendingUp, Tv, Users, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
@@ -109,7 +109,7 @@ export default function Home() {
   }, [homeTeam, awayTeam, home, away, winners, matchInfo, leagueName, playerFee, scoring, scoreSubmission, issues, venueSpecial]);
 
   const rotation = useMemo(()=>buildRotation(Math.min(home.length,away.length)),[home.length,away.length]);
-  const matchups = useMemo(() => rotation.map((order, r) => order.map((a, h) => ({
+  const matchups = useMemo(() => rotation.map((order: number[], r: number) => order.map((a: number, h: number) => ({
     id: `${r}-${h}`, home: home[h], away: away[a],
   }))), [rotation, home, away]);
   const homeWins = Object.values(winners).filter(v => v === "home").length;
@@ -148,13 +148,16 @@ export default function Home() {
     try{const d=await fetch("/api/lineup").then(r=>r.json());if(!off&&d?.lineup) applyLineup(d.lineup);}catch{}
     try{const is=await fetch("/api/issues").then(r=>r.ok?r.json():null);if(!off&&is?.issues?.length) setIssues(is.issues);}catch{}
   })();return()=>{off=true;};},[]);
+  const [signingOut, setSigningOut] = useState(false);
   const signOut=async()=>{
+    setSigningOut(true);
     try{
       await fetch("/api/auth/sign-out",{method:"POST"});
     }catch{}
     setSignedIn(false);
     setCurrentUser(null);
     setPortal("landing");
+    setSigningOut(false);
     toast.success("Signed out successfully.");
   };
   const pullLineup=async()=>{setSyncBusy(true);try{const d=await fetch("/api/lineup").then(r=>r.json());
@@ -202,12 +205,36 @@ export default function Home() {
     toast.success("Loaded demo match with 5 scored games.");
   };
 
-  if(portal==="landing") return <LandingPage onLeague={(name)=>{setLeagueName(name);setPortal("league");}} onOwner={()=>setPortal("owner")} onAuthSuccess={(u)=>{setSignedIn(true);setCurrentUser({id:u.id,username:u.username,role:u.role,email:null});}} />;
-  if(portal==="owner") return <OwnerDashboard leagueName={leagueName} homeTeam={homeTeam} awayTeam={awayTeam} homeWins={homeWins} awayWins={awayWins} matchInfo={matchInfo} scoreSubmission={scoreSubmission} issues={issues} currentUser={currentUser} onSignOut={signOut} onResolve={handleResolveIssue} onBack={()=>setPortal("league")} />;
-
-  return <main className="app-shell">
-    <Toaster position="top-center" />
-    <header className="topbar">
+  return (
+    <>
+      <Toaster position="top-center" richColors closeButton />
+      {portal === "landing" && (
+        <LandingPage
+          onLeague={(name)=>{setLeagueName(name);setPortal("league");}}
+          onOwner={()=>setPortal("owner")}
+          onAuthSuccess={(u)=>{setSignedIn(true);setCurrentUser({id:u.id,username:u.username,role:u.role,email:null});}}
+        />
+      )}
+      {portal === "owner" && (
+        <OwnerDashboard
+          leagueName={leagueName}
+          homeTeam={homeTeam}
+          awayTeam={awayTeam}
+          homeWins={homeWins}
+          awayWins={awayWins}
+          matchInfo={matchInfo}
+          scoreSubmission={scoreSubmission}
+          issues={issues}
+          currentUser={currentUser}
+          onSignOut={signOut}
+          signingOut={signingOut}
+          onResolve={handleResolveIssue}
+          onBack={()=>setPortal("league")}
+        />
+      )}
+      {portal === "league" && (
+        <main className="app-shell">
+          <header className="topbar">
       <div className="brand-mark"><ChevronRight size={19} strokeWidth={3}/></div>
       <div><input className="league-name-input" aria-label="League name" value={leagueName} onChange={e=>setLeagueName(e.target.value)}/><p>League night, without the paperwork.</p></div>
       <div className="topbar-actions">
@@ -268,8 +295,9 @@ export default function Home() {
                 <LayoutDashboard size={13}/> Owner Mode
               </button>
             )}
-            <button className="sign-out-btn" onClick={signOut}>
-              <LogIn size={13} style={{transform:"rotate(180deg)"}}/> Sign out
+            <button className="sign-out-btn" onClick={signOut} disabled={signingOut} style={{display:"flex",alignItems:"center",gap:5}}>
+              {signingOut ? <Loader2 size={13} className="animate-spin"/> : <LogIn size={13} style={{transform:"rotate(180deg)"}}/>}
+              {signingOut ? "Signing out..." : "Sign out"}
             </button>
           </div>
         ) : (
@@ -375,8 +403,12 @@ export default function Home() {
           <div className="lineup-sync">
             <button className="quiet-button" onClick={loadDemoMatch} title="Load pre-configured demo match"><Sparkles size={14}/> Demo match</button>
             <span className={`sync-pill ${lineupId?"live":""}`}>{lineupId?<Cloud/>:<CloudOff/>}{lineupId?"Shared":"This device"}</span>
-            <button className="quiet-button" disabled={syncBusy} onClick={pullLineup}><RefreshCw/> Pull</button>
-            {signedIn&&<button className="quiet-button" disabled={syncBusy} onClick={()=>publishLineup()}><Cloud/> Publish lineup</button>}
+            <button className="quiet-button" disabled={syncBusy} onClick={pullLineup}>
+              <RefreshCw className={syncBusy ? "animate-spin" : ""} size={14}/> {syncBusy ? "Pulling..." : "Pull"}
+            </button>
+            {signedIn&&<button className="quiet-button" disabled={syncBusy} onClick={()=>publishLineup()}>
+              {syncBusy ? <Loader2 className="animate-spin" size={14}/> : <Cloud size={14}/>} {syncBusy ? "Publishing..." : "Publish lineup"}
+            </button>}
           </div>
           <Dialog><DialogTrigger asChild><button className="scan-button"><Camera/> Scan score sheet</button></DialogTrigger>
             <DialogContent className="scan-dialog"><DialogHeader><DialogTitle>Scan a paper score sheet</DialogTitle>
@@ -395,8 +427,8 @@ export default function Home() {
         </div>
         <section className="round-section">
           <div className="round-head"><div><p className="eyebrow">MATCHUPS GENERATED</p><h3>Round {round+1}</h3></div>
-            <div className="round-picker">{rotation.map((_,i)=><button key={i} className={round===i?"active":""} onClick={()=>setRound(i)}>{i+1}</button>)}</div></div>
-          <div className="matchup-list">{(matchups[round]??[]).map((m,i)=>{const chance=matchupForecast(m.home.name,m.away.name,homeTeam,awayTeam);return <div className="matchup-row" key={m.id}>
+            <div className="round-picker">{rotation.map((_: number[], i: number)=><button key={i} className={round===i?"active":""} onClick={()=>setRound(i)}>{i+1}</button>)}</div></div>
+          <div className="matchup-list">{(matchups[round]??[]).map((m: { id: string; home: Player; away: Player }, i: number)=>{const chance=matchupForecast(m.home.name,m.away.name,homeTeam,awayTeam);return <div className="matchup-row" key={m.id}>
             <span className="table-number">{i+1}</span><strong>{m.home.name||`Home ${i+1}`}<small>{chance}% estimate</small></strong><span className="versus">VS</span><strong>{m.away.name||`Visitor ${i+1}`}<small>{100-chance}% estimate</small></strong><span className="match-odds"><b>{chance}</b><i><span style={{width:`${chance}%`}}/></i><b>{100-chance}</b></span>
           </div>})}{(matchups[round]??[]).length===0&&<p className="leaderboard-empty">Add players to both rosters to generate matchups.</p>}</div>
           <p className="forecast-note"><ShieldCheck/> Forecasts blend player season percentage and team record. They are performance estimates, not gambling odds or guaranteed outcomes.</p>
@@ -406,8 +438,8 @@ export default function Home() {
       <TabsContent value="score" className="tab-panel">
         <div className="toolbar"><div><p className="eyebrow">TAP THE WINNER</p><h2>Live scorecard</h2></div>
           <button className="quiet-button" onClick={()=>{setWinners({});setRound(0);toast.success("Scores cleared. Rosters saved.");}}><RotateCcw/> Clear scores</button></div>
-        <div className="all-rounds">{matchups.map((games,r)=><section className="score-round" key={r}><h3>Round {r+1}</h3>
-          {games.map(g=><div className="score-game" key={g.id}>
+        <div className="all-rounds">{matchups.map((games: { id: string; home: Player; away: Player }[], r: number)=><section className="score-round" key={r}><h3>Round {r+1}</h3>
+          {games.map((g: { id: string; home: Player; away: Player })=><div className="score-game" key={g.id}>
             <button className={winners[g.id]==="home"?"winner":""} onClick={()=>setWinners(v=>({...v,[g.id]:"home"}))}>{g.home.name}</button><span>vs</span>
             <button className={winners[g.id]==="away"?"winner":""} onClick={()=>setWinners(v=>({...v,[g.id]:"away"}))}>{g.away.name}</button>
           </div>)}</section>)}{matchups.length===0&&<p className="leaderboard-empty">Add players to both rosters to see the scorecard.</p>}</div>
@@ -443,7 +475,10 @@ export default function Home() {
       <TabsContent value="market" className="tab-panel"><PoolMarket/></TabsContent>
     </Tabs>
     <footer>Action Line-Up <span>•</span> Built for league night</footer>
-  </main>;
+  </main>
+      )}
+    </>
+  );
 }
 
 function ruleAnswer(question:string){
@@ -503,34 +538,49 @@ function RulebookLibrary(){
 
 function LandingPage({onLeague,onOwner,onAuthSuccess}:{onLeague:(name:string)=>void;onOwner:()=>void;onAuthSuccess:(user:{id:string;username:string;role:"owner"|"player"})=>void}){
   const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [building,setBuilding]=useState(false); const [newLeague,setNewLeague]=useState("");
+  const [authLoading, setAuthLoading] = useState<"signin"|"signup"|null>(null);
   const openOwnerSignIn=()=>{document.getElementById("owner-sign-in")?.scrollIntoView({behavior:"smooth",block:"center"});window.setTimeout(()=>document.getElementById("sign-in-identifier")?.focus(),350);toast.info("Sign in with your email and password.");};
   const signIn=async()=>{
     const cleanEmail = email.trim();
     if(!cleanEmail || password.length < 8){toast.error("Enter your email and password (at least 8 characters).");return;}
-    const response=await fetch("/api/auth/sign-in",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:cleanEmail,password})});
-    const result=await response.json();
-    if(!response.ok){toast.error(result.error||"Could not sign in.");return;}
-    toast.success(`Welcome back, ${result.username}.`);
-    onAuthSuccess({ id: result.id || "", username: result.username, role: result.role });
-    result.role==="owner"?onOwner():onLeague("Seguin 8Ball League");
+    setAuthLoading("signin");
+    try {
+      const response=await fetch("/api/auth/sign-in",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:cleanEmail,password})});
+      const result=await response.json();
+      if(!response.ok){toast.error(result.error||"Could not sign in.");return;}
+      toast.success(`Welcome back, ${result.username}.`);
+      onAuthSuccess({ id: result.id || "", username: result.username, role: result.role });
+      result.role==="owner"?onOwner():onLeague("Seguin 8Ball League");
+    } catch {
+      toast.error("Network error. Please try again.");
+    } finally {
+      setAuthLoading(null);
+    }
   };
   const signUp=async()=>{
     const cleanEmail = email.trim();
     if(!cleanEmail.includes("@") || password.length < 8){toast.error("Please enter a valid email and a password with at least 8 characters.");return;}
-    const response=await fetch("/api/auth/sign-up",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:cleanEmail,password})});
-    const result=await response.json();
-    if(!response.ok){toast.error(result.error||"Could not create your account.");return;}
-    toast.success(`Account created for ${result.username}.`);
-    onAuthSuccess({ id: result.id || "", username: result.username, role: result.role });
-    result.role==="owner"?onOwner():onLeague("Seguin 8Ball League");
+    setAuthLoading("signup");
+    try {
+      const response=await fetch("/api/auth/sign-up",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:cleanEmail,password})});
+      const result=await response.json();
+      if(!response.ok){toast.error(result.error||"Could not create your account.");return;}
+      toast.success(`Account created for ${result.username}.`);
+      onAuthSuccess({ id: result.id || "", username: result.username, role: result.role });
+      result.role==="owner"?onOwner():onLeague("Seguin 8Ball League");
+    } catch {
+      toast.error("Network error. Please try again.");
+    } finally {
+      setAuthLoading(null);
+    }
   };
-  return <main className="landing-page"><nav className="landing-public-nav"><a href="/standings">Public standings</a><a href="/schedule">Schedule</a><a href="/rules">League guide</a><a href="/tv" target="_blank" rel="noreferrer" style={{color:"var(--lime)",display:"inline-flex",alignItems:"center",gap:5}}><Tv size={13}/> Bar TV Screen</a></nav><section className="landing-hero"><div className="landing-brand"><span><Trophy/></span><p>ACTION LINE-UP</p></div><p className="eyebrow">POOL LEAGUES · SIMPLE ON PURPOSE</p><h1>League night, organized.</h1><p className="landing-copy">Lineups, scores, league money, local pool items, and standings—one place for every team.</p><div className="mode-picker"><button onClick={()=>onLeague("Seguin 8Ball League")}><Users/><span>PLAYER MODE</span><small>View scores, standings, schedule, marketplace, and public league updates.</small></button><button onClick={openOwnerSignIn}><LayoutDashboard/><span>OWNER MODE</span><small>Sign in to manage leagues, see signups, review matchups, and post score sheets.</small></button></div><div className="landing-stats"><span><b>48</b> players tracked</span><span><b>8</b> teams</span><span><b>16</b> member signups</span></div><section className="league-directory"><div><p className="eyebrow">LEAGUE DIRECTORY</p><h2>Choose a league</h2></div><button className="league-card" onClick={()=>onLeague("Seguin 8Ball League")}><span><Trophy/></span><div><strong>Seguin 8Ball League</strong><small>No teams yet · current league</small></div><ChevronRight/></button><button className="build-league" onClick={()=>setBuilding(v=>!v)}><Plus/> Build another league</button>{building&&<div className="league-builder"><label>New league name<input value={newLeague} onChange={e=>setNewLeague(e.target.value)} placeholder="Example: New Braunfels 8Ball League"/></label><p>Your new league starts with its own scoring setup, teams, members, and owner dashboard.</p><button onClick={()=>{if(!newLeague.trim()){toast.error("Enter the new league name first.");return;}onLeague(newLeague.trim());}}>Create league space</button></div>}</section></section><section id="owner-sign-in" className="login-card"><p className="eyebrow"><LogIn/> PLAYER OR OWNER SIGN IN</p><h2>Welcome back</h2><p>Sign in with your email and password, or create a new account.</p><label>Email<input id="sign-in-identifier" value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="you@example.com" autoComplete="email"/></label><label>Password<input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="At least 8 characters" autoComplete="current-password"/></label><button onClick={signIn}>Sign in</button><a className="forgot-password-link" href="/forgot-password">Forgot password?</a><button className="quiet-button" onClick={signUp}>Create account</button><small>Owner accounts are automatically assigned for authorized league directors.</small></section></main>;
+  return <main className="landing-page"><nav className="landing-public-nav"><a href="/standings">Public standings</a><a href="/schedule">Schedule</a><a href="/rules">League guide</a><a href="/tv" target="_blank" rel="noreferrer" style={{color:"var(--lime)",display:"inline-flex",alignItems:"center",gap:5}}><Tv size={13}/> Bar TV Screen</a></nav><section className="landing-hero"><div className="landing-brand"><span><Trophy/></span><p>ACTION LINE-UP</p></div><p className="eyebrow">POOL LEAGUES · SIMPLE ON PURPOSE</p><h1>League night, organized.</h1><p className="landing-copy">Lineups, scores, league money, local pool items, and standings—one place for every team.</p><div className="mode-picker"><button onClick={()=>onLeague("Seguin 8Ball League")}><Users/><span>PLAYER MODE</span><small>View scores, standings, schedule, marketplace, and public league updates.</small></button><button onClick={openOwnerSignIn}><LayoutDashboard/><span>OWNER MODE</span><small>Sign in to manage leagues, see signups, review matchups, and post score sheets.</small></button></div><div className="landing-stats"><span><b>48</b> players tracked</span><span><b>8</b> teams</span><span><b>16</b> member signups</span></div><section className="league-directory"><div><p className="eyebrow">LEAGUE DIRECTORY</p><h2>Choose a league</h2></div><button className="league-card" onClick={()=>onLeague("Seguin 8Ball League")}><span><Trophy/></span><div><strong>Seguin 8Ball League</strong><small>No teams yet · current league</small></div><ChevronRight/></button><button className="build-league" onClick={()=>setBuilding(v=>!v)}><Plus/> Build another league</button>{building&&<div className="league-builder"><label>New league name<input value={newLeague} onChange={e=>setNewLeague(e.target.value)} placeholder="Example: New Braunfels 8Ball League"/></label><p>Your new league starts with its own scoring setup, teams, members, and owner dashboard.</p><button onClick={()=>{if(!newLeague.trim()){toast.error("Enter the new league name first.");return;}onLeague(newLeague.trim());}}>Create league space</button></div>}</section></section><section id="owner-sign-in" className="login-card"><p className="eyebrow"><LogIn/> PLAYER OR OWNER SIGN IN</p><h2>Welcome back</h2><p>Sign in with your email and password, or create a new account.</p><label>Email<input id="sign-in-identifier" value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="you@example.com" autoComplete="email"/></label><label>Password<input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="At least 8 characters" autoComplete="current-password"/></label><button onClick={signIn} disabled={Boolean(authLoading)} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>{authLoading==="signin"?<><Loader2 className="animate-spin" size={15}/> Signing in…</>:"Sign in"}</button><a className="forgot-password-link" href="/forgot-password">Forgot password?</a><button className="quiet-button" onClick={signUp} disabled={Boolean(authLoading)} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>{authLoading==="signup"?<><Loader2 className="animate-spin" size={15}/> Creating account…</>:"Create account"}</button><small>Owner accounts are automatically assigned for authorized league directors.</small></section></main>;
 }
 
-function OwnerDashboard({leagueName,homeTeam,awayTeam,homeWins,awayWins,matchInfo,scoreSubmission,issues,currentUser,onSignOut,onResolve,onBack}:{leagueName:string;homeTeam:string;awayTeam:string;homeWins:number;awayWins:number;matchInfo:{date:string;time:string;venue:string};scoreSubmission:ScoreSubmission;issues:LeagueIssue[];currentUser:{id:string;username:string;role:"owner"|"player";email:string|null}|null;onSignOut:()=>void;onResolve:(id:string)=>void;onBack:()=>void}){
+function OwnerDashboard({leagueName,homeTeam,awayTeam,homeWins,awayWins,matchInfo,scoreSubmission,issues,currentUser,onSignOut,signingOut,onResolve,onBack}:{leagueName:string;homeTeam:string;awayTeam:string;homeWins:number;awayWins:number;matchInfo:{date:string;time:string;venue:string};scoreSubmission:ScoreSubmission;issues:LeagueIssue[];currentUser:{id:string;username:string;role:"owner"|"player";email:string|null}|null;onSignOut:()=>void;signingOut?:boolean;onResolve:(id:string)=>void;onBack:()=>void}){
   const share=async()=>{const text=`${leagueName} score sheet\n${homeTeam} ${homeWins} — ${awayWins} ${awayTeam}\n${matchInfo.date} · ${matchInfo.time}\n${matchInfo.venue}`;if(navigator.share){await navigator.share({title:`${leagueName} score sheet`,text});}else{await navigator.clipboard.writeText(text);toast.success("Score sheet copied—paste it into your post.");}};
   const openIssues=issues.filter(issue=>!issue.resolved);
-  return <main className="owner-page"><header><button onClick={onBack}>← Back to league</button><div><p className="eyebrow">OWNER CONTROL CENTER</p><h1>{leagueName}</h1></div><div className="owner-header-right"><a href="/tv" target="_blank" rel="noreferrer" className="tv-nav-btn"><Tv size={13}/> Bar TV Screen</a>{currentUser&&<span className="user-name">@{currentUser.username}</span>}<span className="role-badge owner">OWNER</span><button className="sign-out-btn" onClick={onSignOut}>Sign out</button></div></header><section className="owner-metrics"><article><span>MEMBER SIGNUPS</span><strong>0</strong><small>No player accounts yet</small></article><article><span>OPEN REPORTS</span><strong>{openIssues.length}</strong><small>{openIssues.length?"Need owner review":"No problems waiting"}</small></article><article><span>RECENT MATCH</span><strong>{homeTeam} vs {awayTeam}</strong><small>{matchInfo.date} · {matchInfo.venue}</small></article></section><section className="score-sheet"><div><p className="eyebrow"><FileText/> LATEST SCORE SHEET</p><h2>{homeTeam} <b>{homeWins} — {awayWins}</b> {awayTeam}</h2><p>{scoreSubmission.submittedAt?`Submitted · ${scoreSubmission.homeConfirmed&&scoreSubmission.awayConfirmed?"both teams confirmed":"waiting on team confirmation"}`:"Not submitted yet"} · {matchInfo.date} at {matchInfo.time}</p></div><button onClick={share}><Share2/> Post / share score sheet</button></section><section className="owner-review"><div><p className="eyebrow">CAPTAIN REPORTS</p><h2>Review queue</h2></div>{openIssues.length===0?<p>No open reports. Captains can report a dispute, roster issue, payment issue, or score correction from League HQ.</p>:openIssues.map(issue=><article key={issue.id}><div><strong>{issue.type}</strong><p>{issue.details}</p><small>{new Date(issue.createdAt).toLocaleString()}</small></div><button onClick={()=>{onResolve(issue.id);toast.success("Report marked resolved.");}}>Mark resolved</button></article>)}</section><CaptainAdmin/><section className="owner-note"><ShieldCheck/><div><strong>Owner review is ready for the current league session.</strong><p>For shared, real-time league records, every captain and player still needs to be mapped to the live league roster before score confirmations can be enforced by account.</p></div></section></main>;
+  return <main className="owner-page"><header><button onClick={onBack}>← Back to league</button><div><p className="eyebrow">OWNER CONTROL CENTER</p><h1>{leagueName}</h1></div><div className="owner-header-right"><a href="/tv" target="_blank" rel="noreferrer" className="tv-nav-btn"><Tv size={13}/> Bar TV Screen</a>{currentUser&&<span className="user-name">@{currentUser.username}</span>}<span className="role-badge owner">OWNER</span><button className="sign-out-btn" onClick={onSignOut} disabled={signingOut} style={{display:"flex",alignItems:"center",gap:5}}>{signingOut?<Loader2 size={13} className="animate-spin"/>:null}{signingOut?"Signing out…":"Sign out"}</button></div></header><section className="owner-metrics"><article><span>MEMBER SIGNUPS</span><strong>0</strong><small>No player accounts yet</small></article><article><span>OPEN REPORTS</span><strong>{openIssues.length}</strong><small>{openIssues.length?"Need owner review":"No problems waiting"}</small></article><article><span>RECENT MATCH</span><strong>{homeTeam} vs {awayTeam}</strong><small>{matchInfo.date} · {matchInfo.venue}</small></article></section><section className="score-sheet"><div><p className="eyebrow"><FileText/> LATEST SCORE SHEET</p><h2>{homeTeam} <b>{homeWins} — {awayWins}</b> {awayTeam}</h2><p>{scoreSubmission.submittedAt?`Submitted · ${scoreSubmission.homeConfirmed&&scoreSubmission.awayConfirmed?"both teams confirmed":"waiting on team confirmation"}`:"Not submitted yet"} · {matchInfo.date} at {matchInfo.time}</p></div><button onClick={share}><Share2/> Post / share score sheet</button></section><section className="owner-review"><div><p className="eyebrow">CAPTAIN REPORTS</p><h2>Review queue</h2></div>{openIssues.length===0?<p>No open reports. Captains can report a dispute, roster issue, payment issue, or score correction from League HQ.</p>:openIssues.map(issue=><article key={issue.id}><div><strong>{issue.type}</strong><p>{issue.details}</p><small>{new Date(issue.createdAt).toLocaleString()}</small></div><button onClick={()=>{onResolve(issue.id);toast.success("Report marked resolved.");}}>Mark resolved</button></article>)}</section><CaptainAdmin/><section className="owner-note"><ShieldCheck/><div><strong>Owner review is ready for the current league session.</strong><p>For shared, real-time league records, every captain and player still needs to be mapped to the live league roster before score confirmations can be enforced by account.</p></div></section></main>;
 }
 
 type Captain = { id: string; teamName: string; username: string };
