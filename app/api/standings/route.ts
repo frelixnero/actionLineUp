@@ -74,7 +74,10 @@ export async function saveStandingsToDb(teams: unknown[], actor?: string, db?: a
   const error = errResult;
   if (error) throw error;
   // record audit
-  try { await client.from("league_standings_audit").insert({ league_key: LEAGUE_KEY, action: "manual_update", payload: { teams: sanitized }, performed_by: actor ?? null, created_at: new Date().toISOString() }); } catch {}
+  try {
+    const leagueKey = db ? null : (await loadConfig()).LEAGUE_KEY;
+    await client.from("league_standings_audit").insert({ league_key: leagueKey, action: "manual_update", payload: { teams: sanitized }, performed_by: actor ?? null, created_at: new Date().toISOString() });
+  } catch {}
   return sanitized;
 }
 
