@@ -124,7 +124,7 @@ export default function Home() {
   // Dialog-driven add player flow: open dialog to collect name/position, then append
   const [playerDialogOpen, setPlayerDialogOpen] = useState(false);
   const [playerDialogTeam, setPlayerDialogTeam] = useState<"home"|"away">("home");
-  const [playerDraft, setPlayerDraft] = useState<{name:string;position:string;payment:string;active:boolean}>({name:"",position:"Player",payment:"due",active:true});
+  const [playerDraft, setPlayerDraft] = useState<Partial<Player>>({ name: "", position: "Player", payment: "due", active: true });
 
   const addPlayerToList=(team:"home"|"away", player?: Partial<Player>)=>{
     const setter = team==="home"?setHome:setAway;
