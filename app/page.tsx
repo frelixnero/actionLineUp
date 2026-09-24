@@ -108,13 +108,15 @@ export default function Home() {
     localStorage.setItem("action-line-up-match", JSON.stringify({ homeTeam, awayTeam, home, away, winners, matchInfo, leagueName, playerFee, scoring, scoreSubmission, issues, venueSpecial }));
   }, [homeTeam, awayTeam, home, away, winners, matchInfo, leagueName, playerFee, scoring, scoreSubmission, issues, venueSpecial]);
 
-  const rotation = useMemo(()=>buildRotation(Math.min(home.length,away.length)),[home.length,away.length]);
+  const activeHome = useMemo(()=>home.filter(p=>p.active!==false),[home]);
+  const activeAway = useMemo(()=>away.filter(p=>p.active!==false),[away]);
+  const rotation = useMemo(()=>buildRotation(Math.min(activeHome.length,activeAway.length)),[activeHome.length,activeAway.length]);
   const matchups = useMemo(() => rotation.map((order: number[], r: number) => order.map((a: number, h: number) => ({
-    id: `${r}-${h}`, home: home[h], away: away[a],
-  }))), [rotation, home, away]);
+    id: `${r}-${h}`, home: activeHome[h], away: activeAway[a],
+  }))), [rotation, activeHome, activeAway]);
   const homeWins = Object.values(winners).filter(v => v === "home").length;
   const awayWins = Object.values(winners).filter(v => v === "away").length;
-  const unpaid = [...home, ...away].filter(p => p.payment !== "paid").length;
+  const unpaid = [...activeHome, ...activeAway].filter(p => p.payment !== "paid").length;
   const updateName = (team: "home"|"away", index: number, name: string) => {
     const setter = team === "home" ? setHome : setAway;
     setter(list => list.map((p,i) => i === index ? {...p,name} : p));
