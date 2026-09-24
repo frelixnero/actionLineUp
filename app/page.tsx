@@ -121,7 +121,27 @@ export default function Home() {
   };
   const updatePosition=(team:"home"|"away",index:number,position:string)=>{const setter=team==="home"?setHome:setAway;setter(list=>list.map((p,i)=>i===index?{...p,position}:p));};
   const togglePlayer=(team:"home"|"away",index:number)=>{const setter=team==="home"?setHome:setAway;setter(list=>list.map((p,i)=>i===index?{...p,active:!p.active}:p));};
-  const addPlayer=(team:"home"|"away")=>{const setter=team==="home"?setHome:setAway;setter(list=>{if(list.length>=8){toast.error("Teams can have up to 8 roster spots.");return list;}return [...list,{name:`Player ${list.length+1}`,position:"Player",payment:"due",active:true}];});};
+  // Dialog-driven add player flow: open dialog to collect name/position, then append
+  const [playerDialogOpen, setPlayerDialogOpen] = useState(false);
+  const [playerDialogTeam, setPlayerDialogTeam] = useState<"home"|"away">("home");
+  const [playerDraft, setPlayerDraft] = useState<{name:string;position:string;payment:string;active:boolean}>({name:"",position:"Player",payment:"due",active:true});
+
+  const addPlayerToList=(team:"home"|"away", player?: Partial<Player>)=>{
+    const setter = team==="home"?setHome:setAway;
+    setter(list=>{
+      if(list.length>=8){ toast.error("Teams can have up to 8 roster spots."); return list; }
+      const next = {
+        name: player?.name ?? `Player ${list.length+1}`,
+        position: player?.position ?? "Player",
+        payment: (player?.payment as any) ?? "due",
+        active: player?.active ?? true,
+      };
+      return [...list, next];
+    });
+  };
+
+  const showAddPlayerDialog=(team:"home"|"away")=>{ setPlayerDialogTeam(team); setPlayerDraft({name:"",position:"Player",payment:"due",active:true}); setPlayerDialogOpen(true); };
+  const confirmAddPlayer=()=>{ addPlayerToList(playerDialogTeam, playerDraft); setPlayerDialogOpen(false); toast.success("Player added to roster."); };
   const movePlayer=(team:"home"|"away",from:number,to:number)=>{const setter=team==="home"?setHome:setAway;setter(list=>{if(to<0||to>=list.length||from===to)return list;const next=[...list];const [moved]=next.splice(from,1);next.splice(to,0,moved);return next;});};
   const cyclePay = (team: "home"|"away", index: number) => {
     const setter = team === "home" ? setHome : setAway;
@@ -436,8 +456,8 @@ export default function Home() {
         <section className="match-location-bar"><label><MapPin/><span>PLAYING AT</span><input value={matchInfo.venue} onChange={e=>setMatchInfo(v=>({...v,venue:e.target.value}))}/></label><label><CalendarDays/><span>DATE</span><input type="date" value={matchInfo.date} onChange={e=>setMatchInfo(v=>({...v,date:e.target.value}))}/></label><label><Clock/><span>TIME</span><input value={matchInfo.time} onChange={e=>setMatchInfo(v=>({...v,time:e.target.value}))}/></label></section>
         {(()=>{const chance=Math.round(pctForTeam(homeTeam)/(pctForTeam(homeTeam)+pctForTeam(awayTeam))*100);return <section className="team-forecast"><div><p className="eyebrow"><Sparkles/> MATCH FORECAST</p><h3>{homeTeam} <b>{chance}%</b></h3></div><div className="forecast-track"><i style={{width:`${chance}%`}}/><span/></div><div><h3><b>{100-chance}%</b> {awayTeam}</h3><small>Estimated from current team records · not betting odds</small></div></section>})()}
         <div className="roster-grid">
-          <Roster title={homeTeam} players={home} team="home" onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onAdd={addPlayer} onMove={movePlayer}/>
-          <Roster title={awayTeam} players={away} team="away" onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onAdd={addPlayer} onMove={movePlayer}/>
+          <Roster title={homeTeam} players={home} team="home" onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onAdd={()=>showAddPlayerDialog("home")} onMove={movePlayer}/>
+          <Roster title={awayTeam} players={away} team="away" onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onAdd={()=>showAddPlayerDialog("away")} onMove={movePlayer}/>
         </div>
         <section className="round-section">
           <div className="round-head"><div><p className="eyebrow">MATCHUPS GENERATED</p><h3>Round {round+1}</h3></div>
@@ -488,6 +508,20 @@ export default function Home() {
       <TabsContent value="rules" className="tab-panel"><RuleDesk/></TabsContent>
       <TabsContent value="market" className="tab-panel"><PoolMarket/></TabsContent>
     </Tabs>
+    {/* Player add dialog */}
+    <Dialog open={playerDialogOpen} onOpenChange={setPlayerDialogOpen}>
+      <DialogContent className="scan-dialog">
+        <DialogHeader>
+          <DialogTitle>Add player to roster</DialogTitle>
+          <DialogDescription>Enter player details to add them to the selected roster spot.</DialogDescription>
+        </DialogHeader>
+        <div className="event-form">
+          <label>Name<input value={playerDraft.name} onChange={e=>setPlayerDraft(v=>({...v,name:e.target.value}))} placeholder="Full name"/></label>
+          <label>Position<input value={playerDraft.position} onChange={e=>setPlayerDraft(v=>({...v,position:e.target.value}))} placeholder="Position (optional)"/></label>
+          <div className="dialog-actions"><button onClick={confirmAddPlayer}><Plus/> Add player</button><button className="quiet-button" onClick={()=>setPlayerDialogOpen(false)}>Cancel</button></div>
+        </div>
+      </DialogContent>
+    </Dialog>
     <footer>Action Line-Up <span>•</span> Built for league night</footer>
   </main>
       )}
