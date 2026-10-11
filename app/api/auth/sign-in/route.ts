@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminSupabase, publicSupabase, signInIdentifierToEmail, isSupabaseConfigured } from "@/lib/supabase";
 import { ACCESS_COOKIE, createDemoToken } from "@/lib/auth";
-import { bootstrapOwnerIfNeeded } from "@/lib/owner";
+import { bootstrapOwnerIfNeeded, isOwnerEmail } from "@/lib/owner";
 
 export async function POST(request: Request) {
   try {
@@ -17,8 +17,8 @@ export async function POST(request: Request) {
     if (!isSupabaseConfigured()) {
       const username = rawIdentifier.includes("@") ? rawIdentifier.split("@")[0] : rawIdentifier;
       const cleanEmail = rawIdentifier.includes("@") ? rawIdentifier.toLowerCase() : `${username.toLowerCase()}@actionlineup.local`;
-      const isOwner = cleanEmail.includes("owner") || cleanEmail === (process.env.INITIAL_OWNER_EMAIL?.toLowerCase() ?? "owner@seguinpool.org");
-      const role = isOwner ? "owner" : "player";
+      // Single canonical owner list (OWNER_EMAIL); demo mode obeys it too.
+      const role = isOwnerEmail(cleanEmail) ? "owner" : "player";
 
       const demoUser = {
         id: "demo-" + username.toLowerCase().replace(/[^a-z0-9]/g, ""),

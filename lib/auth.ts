@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { isSupabaseConfigured, publicSupabase } from "@/lib/supabase";
+import { isOwnerEmail, resolveRole, warnIfOwnerEnvEmpty } from "@/lib/owner";
 
 export const ACCESS_COOKIE = "actionlineup_access";
 
@@ -31,7 +32,10 @@ export async function currentUser(): Promise<CurrentUser | null> {
   if (!token) return null;
 
   const demoUser = parseDemoToken(token);
-  if (demoUser) return demoUser;
+  if (demoUser) {
+    warnIfOwnerEnvEmpty();
+    return { ...demoUser, role: resolveRole(demoUser.email, demoUser.role) };
+  }
 
   if (!isSupabaseConfigured()) return null;
 
@@ -40,11 +44,14 @@ export async function currentUser(): Promise<CurrentUser | null> {
     const { data: authData, error } = await supabase.auth.getUser(token);
     if (error || !authData.user) return null;
     const { data: profile } = await supabase.from("profiles").select("username, role, email").eq("id", authData.user.id).maybeSingle();
+    const email = profile?.email ?? authData.user.email ?? null;
+    warnIfOwnerEnvEmpty();
     return {
       id: authData.user.id,
       username: profile?.username ?? authData.user.email?.split("@")[0] ?? "member",
-      role: profile?.role === "owner" ? "owner" : "player",
-      email: profile?.email ?? authData.user.email ?? null,
+      // OWNER_EMAIL is authoritative: DB role is ignored for authorization.
+      role: resolveRole(email, profile?.role),
+      email,
     };
   } catch {
     return null;

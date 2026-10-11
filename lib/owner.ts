@@ -1,21 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
- * Owner bootstrap.
+ * Owner authority.
  *
- * Sign-up only ever creates players, and there is no in-app way to become the
- * owner, so a brand new deployment has nobody who can publish a tournament,
- * assign a captain or post an announcement. Promoting by hand needs the service
- * role key, which is marked sensitive in Vercel and cannot be read back out.
+ * The `OWNER_EMAIL` env var (comma-separated) is the single source of truth
+ * for who is an owner. `profiles.role` in the database is NOT consulted for
+ * authorization — see `resolveRole` below. Sign-up/sign-in still backfill
+ * `profiles.role` via `bootstrapOwnerIfNeeded` so the table stays consistent
+ * for anything inspecting it directly, but no permission check reads it.
  *
- * This closes that gap with the narrowest rule that still works:
- *
- *   - the address must match OWNER_EMAIL exactly, and
- *   - there must be no owner yet.
- *
- * The second condition is what makes it safe to leave in the codebase: the
- * moment a first owner exists the path is dead, so it cannot be used later to
- * escalate. After that, ownership changes are a database operation, on purpose.
+ * Strict mode: an address with `owner` in the database but NOT in
+ * `OWNER_EMAIL` is treated as a player. If `OWNER_EMAIL` is empty or
+ * unset, nobody is an owner — `warnIfOwnerEnvEmpty` logs once so a
+ * misconfigured deployment is visible instead of silently locked out.
  */
 
 export const getOwnerEmails = (): string[] =>
@@ -29,6 +26,24 @@ export const isOwnerEmail = (email: string | null | undefined): boolean => {
   const target = email.trim().toLowerCase();
   return getOwnerEmails().includes(target);
 };
+
+/**
+ * Resolve the effective role for a user. Env-listed emails are always
+ * owners; everyone else is a player regardless of the stored DB role.
+ */
+export const resolveRole = (
+  email: string | null | undefined,
+  _dbRole?: string | null,
+): "owner" | "player" => (isOwnerEmail(email) ? "owner" : "player");
+
+let _warnedEmpty = false;
+export function warnIfOwnerEnvEmpty(): void {
+  if (_warnedEmpty) return;
+  if (getOwnerEmails().length === 0) {
+    _warnedEmpty = true;
+    console.warn("[auth] OWNER_EMAIL is empty or unset — no user will have owner access.");
+  }
+}
 
 export async function bootstrapOwnerIfNeeded(
   admin: SupabaseClient,

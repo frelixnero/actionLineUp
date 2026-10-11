@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminSupabase, publicSupabase, isSupabaseConfigured } from "@/lib/supabase";
 import { ACCESS_COOKIE, createDemoToken } from "@/lib/auth";
-import { bootstrapOwnerIfNeeded } from "@/lib/owner";
+import { bootstrapOwnerIfNeeded, isOwnerEmail } from "@/lib/owner";
 
 function setAccessCookie(response: NextResponse, token: string) {
   response.cookies.set(ACCESS_COOKIE, token, {
@@ -31,10 +31,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Please provide a valid email and a password with at least 8 characters." }, { status: 400 });
     }
 
-    // If Supabase is not configured, register in local demo presentation mode
+    // If Supabase is not configured, register in local demo presentation mode.
+    // Single canonical owner list (OWNER_EMAIL); demo mode obeys it too.
     if (!isSupabaseConfigured()) {
-      const isOwner = cleanEmail.includes("owner") || cleanEmail === (process.env.INITIAL_OWNER_EMAIL?.toLowerCase() ?? "owner@seguinpool.org");
-      const role = isOwner ? "owner" : "player";
+      const role = isOwnerEmail(cleanEmail) ? "owner" : "player";
 
       const demoUser = {
         id: "demo-" + cleanUsername.toLowerCase().replace(/[^a-z0-9]/g, ""),
