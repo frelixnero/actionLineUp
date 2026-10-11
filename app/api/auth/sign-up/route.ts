@@ -3,6 +3,16 @@ import { adminSupabase, publicSupabase, isSupabaseConfigured } from "@/lib/supab
 import { ACCESS_COOKIE, createDemoToken } from "@/lib/auth";
 import { bootstrapOwnerIfNeeded } from "@/lib/owner";
 
+function setAccessCookie(response: NextResponse, token: string) {
+  response.cookies.set(ACCESS_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24,
+  });
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -35,13 +45,7 @@ export async function POST(request: Request) {
 
       const token = createDemoToken(demoUser);
       const response = NextResponse.json({ ok: true, id: demoUser.id, role, username: cleanUsername });
-      response.cookies.set(ACCESS_COOKIE, token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-        maxAge: 60 * 60 * 24,
-      });
+      setAccessCookie(response, token);
       return response;
     }
 
@@ -70,13 +74,7 @@ export async function POST(request: Request) {
             const role = profile?.role ?? "player";
             const username = profile?.username ?? cleanUsername;
             const response = NextResponse.json({ ok: true, id: authData.user.id, role, username });
-            response.cookies.set(ACCESS_COOKIE, authData.session.access_token, {
-              httpOnly: true,
-              secure: process.env.NODE_ENV === "production",
-              sameSite: "lax",
-              path: "/",
-              maxAge: 60 * 60 * 24,
-            });
+            setAccessCookie(response, authData.session.access_token);
             return response;
           }
         } catch {
@@ -123,13 +121,7 @@ export async function POST(request: Request) {
         password,
       });
       if (authData?.session?.access_token) {
-        response.cookies.set(ACCESS_COOKIE, authData.session.access_token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "lax",
-          path: "/",
-          maxAge: 60 * 60 * 24,
-        });
+        setAccessCookie(response, authData.session.access_token);
       }
     } catch {
       // Account created even if immediate token generation had a glitch
