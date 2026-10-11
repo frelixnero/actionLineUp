@@ -20,6 +20,64 @@ export function applyMatchResult(teams: any[], winnerName: string, loserName: st
   });
 }
 
+export function normalizeTeamName(value: unknown) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+export function sameResult(
+  a: { winner: string; loser: string } | null | undefined,
+  b: { winner: string; loser: string } | null | undefined,
+) {
+  if (!a || !b) return false;
+  return (
+    normalizeTeamName(a.winner) === normalizeTeamName(b.winner) &&
+    normalizeTeamName(a.loser) === normalizeTeamName(b.loser)
+  );
+}
+
+export type GameWinnersInput =
+  | Record<string, unknown>
+  | Array<{ winner?: unknown } | string>
+  | null
+  | undefined;
+
+export function countGameWinners(input: GameWinnersInput) {
+  let home = 0;
+  let away = 0;
+  if (Array.isArray(input)) {
+    for (const row of input) {
+      const w = typeof row === "string" ? row : (row as { winner?: unknown })?.winner;
+      if (w === "home") home += 1;
+      else if (w === "away") away += 1;
+    }
+  } else if (input && typeof input === "object") {
+    for (const v of Object.values(input)) {
+      if (v === "home") home += 1;
+      else if (v === "away") away += 1;
+    }
+  }
+  return { home, away };
+}
+
+/**
+ * Derive the decisive match result from recorded game winners.
+ * Returns null when there is no winner (empty or tied).
+ */
+export function decideMatchResult(
+  winners: GameWinnersInput,
+  homeTeam: string,
+  awayTeam: string,
+) {
+  const { home, away } = countGameWinners(winners);
+  if (home === away) return null;
+  const h = String(homeTeam ?? "").trim().slice(0, 80);
+  const a = String(awayTeam ?? "").trim().slice(0, 80);
+  if (!h || !a) return null;
+  return home > away
+    ? { winner: h, loser: a, homeWins: home, awayWins: away, side: "home" as const }
+    : { winner: a, loser: h, homeWins: home, awayWins: away, side: "away" as const };
+}
+
 export function sanitizeTeams(input: unknown) {
   if (!Array.isArray(input)) return [];
   return (input as any[]).map((row) => ({

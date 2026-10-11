@@ -9,6 +9,9 @@ import {
 
 const POLL_MS = 12000;
 const PRESENTED_BY = "ActionLadder";
+// Explicit demo fallback gate: demo rows never render as server data.
+// The TV is a read-only kiosk fed by live server polls below.
+const ALLOW_DEMO_ROWS = false;
 type ScreenKey = "live" | "leaderboard" | "champions";
 
 type Board = {
@@ -101,13 +104,15 @@ export default function TvBoard() {
     name: row.playerName ?? row.player_name ?? `Player ${idx + 1}`,
     points: row.totalPoints ?? row.total_points ?? 0,
     entries: row.entriesCount ?? row.entries_count ?? 0,
-  })) : [
+  })) : (ALLOW_DEMO_ROWS ? [
     { rank: 1, name: "Alice", points: 10, entries: 1 },
     { rank: 2, name: "Bob", points: 7, entries: 1 },
     { rank: 3, name: "Cara", points: 5, entries: 1 },
-  ];
+  ] : []);
 
-  if (!board && screen === "live") {
+  // Idle branded state whenever no active tournament exists. The TV stays on
+  // this kiosk screen instead of cycling leaderboard/champions filler.
+  if (!board) {
     return <main className="tv-shell">
       <div className="tv-idle">
         <Trophy />
@@ -115,49 +120,6 @@ export default function TvBoard() {
         <h1>Action Line-Up</h1>
         <p>{miniTitle ?? "No event running right now."}</p>
         <span>This screen updates by itself when the director starts one.</span>
-      </div>
-    </main>;
-  }
-
-  if (!board) {
-    return <main className="tv-shell">
-      <header className="tv-top">
-        <div>
-          <p className="tv-eyebrow">Vegas Mini Madness</p>
-          <h1>{miniTitle ?? "Live standings"}</h1>
-          <p className="tv-brand">{PRESENTED_BY} presents <b>Action Line-Up</b></p>
-        </div>
-        <div className="tv-meta">
-          <span className={`tv-live ${connected ? "" : "stale"}`}>{connected ? <Wifi /> : <WifiOff />}{connected ? "LIVE" : "RECONNECTING"}</span>
-          <span className="tv-clock">{clock}</span>
-        </div>
-      </header>
-      <div className="tv-body">
-        <section className="tv-now">
-          <h2>Day 2 leaderboard</h2>
-          <div className="tv-table-rows">
-            {leaderboardRows.map((row) => (
-              <div key={row.name}>
-                <span>#{row.rank}</span>
-                <strong>{row.name}</strong>
-                <b>{row.points}</b>
-                <small>{row.entries} entries</small>
-              </div>
-            ))}
-          </div>
-        </section>
-        <aside className="tv-standings">
-          <h2>Recent champions</h2>
-          <div className="tv-table-rows">
-            {leaderboardRows.slice(0, 3).map((row) => (
-              <div key={`${row.name}-champ`}>
-                <span><Medal size={14} /></span>
-                <strong>{row.name}</strong>
-                <b>{row.points} pts</b>
-              </div>
-            ))}
-          </div>
-        </aside>
       </div>
     </main>;
   }
@@ -206,7 +168,9 @@ export default function TvBoard() {
           <section className="tv-now">
             <h2>Top performers</h2>
             <div className="tv-table-rows">
-              {leaderboardRows.map((row) => (
+              {leaderboardRows.length === 0
+                ? <p className="tv-waiting">No leaderboard entries yet.</p>
+                : leaderboardRows.map((row) => (
                 <div key={row.name}>
                   <span>#{row.rank}</span>
                   <strong>{row.name}</strong>
@@ -249,7 +213,9 @@ export default function TvBoard() {
           <section className="tv-now">
             <h2>Past winners</h2>
             <div className="tv-table-rows">
-              {leaderboardRows.map((row) => (
+              {leaderboardRows.length === 0
+                ? <p className="tv-waiting">No champions crowned yet.</p>
+                : leaderboardRows.map((row) => (
                 <div key={`${row.name}-past`}>
                   <span>#{row.rank}</span>
                   <strong>{row.name}</strong>

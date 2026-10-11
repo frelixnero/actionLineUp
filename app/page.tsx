@@ -89,6 +89,8 @@ export default function Home() {
   const [editingSpecial, setEditingSpecial] = useState(false);
 
   useEffect(() => {
+    // Local draft cache only — never the authoritative result. The shared
+    // lineup from /api/lineup overwrites this when present (see mount fetch).
     const saved = localStorage.getItem("action-line-up-match");
     if (!saved) return;
     try {
@@ -105,7 +107,8 @@ export default function Home() {
     } catch {}
   }, []);
   useEffect(() => {
-    localStorage.setItem("action-line-up-match", JSON.stringify({ homeTeam, awayTeam, home, away, winners, matchInfo, leagueName, playerFee, scoring, scoreSubmission, issues, venueSpecial }));
+    // Local draft cache only; the server lineup is authoritative.
+    localStorage.setItem("action-line-up-match", JSON.stringify({ source: "local-fallback", homeTeam, awayTeam, home, away, winners, matchInfo, leagueName, playerFee, scoring, scoreSubmission, issues, venueSpecial }));
   }, [homeTeam, awayTeam, home, away, winners, matchInfo, leagueName, playerFee, scoring, scoreSubmission, issues, venueSpecial]);
 
   const activeHome = useMemo(()=>home.filter(p=>p.active!==false),[home]);
@@ -191,18 +194,12 @@ export default function Home() {
     const d=await res.json();
     if(!res.ok){toast.error(d?.error??"Could not publish the lineup.");return;}
     setLineupId(d.id); toast.success("Lineup published. Both teams can see it.");
-    // If both teams confirmed and a winner is clearly decided, auto-update standings
+    // Standings are authoritative server-side: send the lineup id and let the
+    // server require both-team confirmation, derive the winner, and apply the
+    // result exactly once (retries are safe no-ops).
     try {
-      const bothConfirmed = Boolean(sub.homeConfirmed) && Boolean(sub.awayConfirmed);
-      if (bothConfirmed) {
-        // Determine match winner by counting recorded game winners (winners map)
-        const homeCount = Object.values(winners).filter(v => v === "home").length;
-        const awayCount = Object.values(winners).filter(v => v === "away").length;
-        if (homeCount !== awayCount) {
-          const winnerTeam = homeCount > awayCount ? homeTeam : awayTeam;
-          const loserTeam = homeCount > awayCount ? awayTeam : homeTeam;
-          await fetch("/api/standings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ winner: winnerTeam, loser: loserTeam }) });
-        }
+      if (d?.id) {
+        await fetch("/api/standings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lineupId: d.id }) });
       }
     } catch {}
   }catch{toast.error("Could not reach the league board.");}finally{setSyncBusy(false);}};

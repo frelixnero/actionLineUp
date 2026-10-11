@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminSupabase } from "@/lib/supabase";
-import { LEAGUE_KEY, canEditLineup } from "@/lib/league";
+import { LEAGUE_KEY, canEditLineup, captainTeams } from "@/lib/league";
 
 type Side = "home" | "away";
 type Payment = "paid" | "due" | "pending";
@@ -95,6 +95,33 @@ export async function PUT(request: Request) {
     const matchDate = cleanText(info.date, 10);
 
     const sub = (body?.scoreSubmission ?? {}) as { submittedAt?: unknown; homeConfirmed?: unknown; awayConfirmed?: unknown };
+    const requestedHome = Boolean(sub.homeConfirmed);
+    const requestedAway = Boolean(sub.awayConfirmed);
+
+    // Per-side confirmation: an owner may set both flags, but a captain may
+    // only set their own side's flag. The other side keeps its stored value
+    // so one captain cannot confirm for both teams.
+    let homeConfirmed = requestedHome;
+    let awayConfirmed = requestedAway;
+    if (permission.user.role !== "owner") {
+      const myTeams = (await captainTeams(permission.user)).map(t => t.trim().toLowerCase());
+      const homeNorm = homeTeam.trim().toLowerCase();
+      const awayNorm = awayTeam.trim().toLowerCase();
+      const existingIdForConfirm = typeof body?.id === "string" ? body.id : null;
+      let stored = { home_confirmed: false, away_confirmed: false };
+      if (existingIdForConfirm) {
+        const { data } = await db
+          .from("lineups")
+          .select("home_confirmed, away_confirmed")
+          .eq("id", existingIdForConfirm)
+          .eq("league_key", LEAGUE_KEY)
+          .maybeSingle();
+        if (data) stored = { home_confirmed: Boolean((data as Record<string, unknown>).home_confirmed), away_confirmed: Boolean((data as Record<string, unknown>).away_confirmed) };
+      }
+      homeConfirmed = myTeams.includes(homeNorm) ? requestedHome : stored.home_confirmed;
+      awayConfirmed = myTeams.includes(awayNorm) ? requestedAway : stored.away_confirmed;
+    }
+
     const payload = {
       league_key: LEAGUE_KEY,
       home_team: homeTeam,
@@ -104,8 +131,8 @@ export async function PUT(request: Request) {
       match_time: cleanText(info.time, 40) || null,
       venue: cleanText(info.venue, 160) || null,
       scoring: (body?.scoring && typeof body.scoring === "object") ? body.scoring : {},
-      home_confirmed: Boolean(sub.homeConfirmed),
-      away_confirmed: Boolean(sub.awayConfirmed),
+      home_confirmed: homeConfirmed,
+      away_confirmed: awayConfirmed,
       submitted_at: typeof sub.submittedAt === "string" && sub.submittedAt ? sub.submittedAt : null,
       updated_by: permission.user.id,
     };

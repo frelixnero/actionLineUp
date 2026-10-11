@@ -32,6 +32,22 @@ async function loadStandingsLib() {
   return _standingsLib;
 }
 
+// Load the league permission helpers dynamically (same alias-free pattern).
+let _leagueLib: any = null;
+async function loadLeagueLib() {
+  if (_leagueLib) return _leagueLib;
+  try {
+    _leagueLib = await import("@/lib/league");
+  } catch {
+    try {
+      _leagueLib = await import("../../../lib/league");
+    } catch {
+      _leagueLib = await import("../../../lib/league.ts");
+    }
+  }
+  return _leagueLib;
+}
+
 // Helper: obtain a DB client, allowing tests to inject a test DB via
 // `globalThis.__TEST_DB__` when `NODE_ENV === 'test'`.
 async function getDb() {
@@ -114,6 +130,112 @@ export async function recordMatchResultInDb(winner: string, loser: string, actor
   return next;
 }
 
+/**
+ * Authoritative match-result application for a lineup.
+ *
+ * - Requires both-team confirmation on the lineup.
+ * - Derives the winner/loser server-side from lineup_results.
+ * - Applies standings exactly once per lineup via an atomic claim on
+ *   lineups.result_winner / result_loser / standings_applied_at.
+ * - Retried calls with the same result are no-ops (alreadyApplied: true).
+ */
+export async function recordResultForLineupInDb(lineupId: string, actor?: string, db?: any) {
+  const client = db ?? await getDb();
+  const lib = await loadStandingsLib();
+  const cleanId = String(lineupId ?? "").trim().slice(0, 80);
+  if (!cleanId) {
+    const e: any = new Error("lineupId required.");
+    e.status = 400;
+    throw e;
+  }
+
+  const { data: lineup, error: lineupError } = await client
+    .from("lineups")
+    .select("id, home_team, away_team, home_confirmed, away_confirmed, result_winner, result_loser, standings_applied_at")
+    .eq("id", cleanId)
+    .maybeSingle();
+  if (lineupError) throw lineupError;
+  if (!lineup) {
+    const e: any = new Error("Lineup not found.");
+    e.status = 404;
+    throw e;
+  }
+
+  if (!lineup.home_confirmed || !lineup.away_confirmed) {
+    const e: any = new Error("Both teams must confirm the score sheet before standings update.");
+    e.status = 409;
+    throw e;
+  }
+
+  const { data: resultRows, error: resultsError } = await client
+    .from("lineup_results")
+    .select("game_key, winner")
+    .eq("lineup_id", cleanId);
+  if (resultsError) throw resultsError;
+  const decided = lib.decideMatchResult(resultRows ?? [], lineup.home_team, lineup.away_team);
+  if (!decided) {
+    const e: any = new Error("No decisive result to apply.");
+    e.status = 409;
+    throw e;
+  }
+  const winnerTeam = decided.winner as string;
+  const loserTeam = decided.loser as string;
+
+  if ((lineup as Record<string, unknown>).standings_applied_at) {
+    if (lib.sameResult(
+      { winner: (lineup as Record<string, string>).result_winner, loser: (lineup as Record<string, string>).result_loser },
+      { winner: winnerTeam, loser: loserTeam },
+    )) {
+      const current = await getStandingsFromDb(db ?? undefined);
+      return { teams: current, alreadyApplied: true, winner: winnerTeam, loser: loserTeam };
+    }
+    const e: any = new Error("Standings already applied for this match with a different result.");
+    e.status = 409;
+    throw e;
+  }
+
+  const appliedAt = new Date().toISOString();
+  const { data: claimed, error: claimError } = await client
+    .from("lineups")
+    .update({ result_winner: winnerTeam, result_loser: loserTeam, standings_applied_at: appliedAt })
+    .eq("id", cleanId)
+    .is("standings_applied_at", null)
+    .select("id");
+  if (claimError) throw claimError;
+  if (!claimed || (claimed as unknown[]).length === 0) {
+    const current = await getStandingsFromDb(db ?? undefined);
+    return { teams: current, alreadyApplied: true, winner: winnerTeam, loser: loserTeam };
+  }
+
+  let settingsRow: Record<string, any> | null;
+  if (db) {
+    const r = await client.from("league_settings").select("id, standings").eq("league_key", null).maybeSingle();
+    if (r.error) throw r.error;
+    settingsRow = r.data;
+  } else {
+    const cfg = await loadConfig();
+    const r = await client.from("league_settings").select("id, standings").eq("league_key", cfg.LEAGUE_KEY).maybeSingle();
+    if (r.error) throw r.error;
+    settingsRow = r.data;
+  }
+  const teams = settingsRow?.standings ?? lib.DEFAULT_TEAMS;
+  const next = lib.applyMatchResult(teams, winnerTeam, loserTeam);
+
+  if (db) {
+    const r = await client.from("league_settings").update({ standings: next });
+    if ((r as { error?: unknown }).error) throw (r as { error: unknown }).error;
+  } else {
+    const cfg = await loadConfig();
+    const { error: upErr } = await client.from("league_settings").update({ standings: next }).eq("league_key", cfg.LEAGUE_KEY);
+    if (upErr) throw upErr;
+  }
+  try {
+    const leagueKey = db ? null : (await loadConfig()).LEAGUE_KEY;
+    await client.from("league_standings_audit").insert({ league_key: leagueKey, action: "auto_increment", payload: { lineup_id: cleanId, winner: winnerTeam, loser: loserTeam }, performed_by: actor ?? null, created_at: new Date().toISOString() });
+  } catch {}
+  return { teams: next, alreadyApplied: false, winner: winnerTeam, loser: loserTeam };
+}
+
 // Default seed data — used when no custom standings have been saved yet
 // DEFAULT_TEAMS is provided by `lib/standings` (imported at top).
 
@@ -180,37 +302,48 @@ export async function PUT(request: Request) {
   }
 }
 
-/** PATCH /api/standings — record a single match result (increment W/L) */
+/** PATCH /api/standings — apply a confirmed lineup result (increment W/L once) */
 export async function PATCH(request: Request) {
   const { NextResponse } = await import("next/server");
-  let body: { winner?: unknown; loser?: unknown };
+  let body: { lineupId?: unknown };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const winnerName = typeof body.winner === "string" ? body.winner.trim().slice(0, 80) : "";
-  const loserName = typeof body.loser === "string" ? body.loser.trim().slice(0, 80) : "";
-  if (!winnerName || !loserName) return NextResponse.json({ error: "winner and loser required." }, { status: 400 });
+  const lineupId = typeof body?.lineupId === "string" ? body.lineupId.trim().slice(0, 80) : "";
+  if (!lineupId) return NextResponse.json({ error: "lineupId required." }, { status: 400 });
 
   try {
     const db = await getDb();
-    const cfg = await loadConfig();
-    const { data, error } = await db
-      .from("league_settings")
-      .select("id, standings")
-      .eq("league_key", cfg.LEAGUE_KEY)
+    const { data: lineup, error: lineupError } = await db
+      .from("lineups")
+      .select("home_team, away_team")
+      .eq("id", lineupId)
       .maybeSingle();
-    if (error) throw error;
+    if (lineupError) throw lineupError;
+    if (!lineup) return NextResponse.json({ error: "Lineup not found." }, { status: 404 });
 
-    const lib = await loadStandingsLib();
-    const teams = (data as Record<string, any> | null)?.standings ?? lib.DEFAULT_TEAMS;
-    const next = lib.applyMatchResult(teams, winnerName, loserName);
+    let actor: string | undefined;
+    try {
+      const leagueLib = await loadLeagueLib();
+      const permission = await leagueLib.canEditLineup(
+        (lineup as Record<string, string>).home_team ?? "",
+        (lineup as Record<string, string>).away_team ?? "",
+      );
+      if (!permission.ok) return NextResponse.json({ error: permission.error }, { status: permission.status });
+      actor = permission.user.id;
+    } catch {
+      return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
+    }
 
-    const { error: upErr } = await db.from("league_settings").update({ standings: next }).eq("league_key", cfg.LEAGUE_KEY);
-    if (upErr) throw upErr;
-    return NextResponse.json({ ok: true, teams: next });
+    try {
+      const result = await recordResultForLineupInDb(lineupId, actor);
+      return NextResponse.json({ ok: true, teams: result.teams, alreadyApplied: result.alreadyApplied, winner: result.winner, loser: result.loser });
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message ?? "Could not record result." }, { status: e?.status ?? 503 });
+    }
   } catch {
     return NextResponse.json({ error: "Could not record result." }, { status: 503 });
   }
