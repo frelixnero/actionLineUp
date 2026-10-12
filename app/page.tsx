@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { AlertTriangle, BarChart3, Bell, BookOpen, CalendarDays, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Cloud, CloudOff, RefreshCw, CircleDollarSign, Clock, Crown, Edit2, FileText, HandHeart, LayoutDashboard, Loader2, LogIn, MapPin, Medal, MessageCircle, Play, Plus, QrCode, RotateCcw, Search, Send, Share2, ShieldCheck, ShoppingBag, Sparkles, ThumbsDown, ThumbsUp, Trophy, TrendingUp, Tv, Users, WalletCards } from "lucide-react";
+import { AlertTriangle, BarChart3, Bell, BookOpen, CalendarDays, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Cloud, CloudOff, RefreshCw, CircleDollarSign, Clock, Crown, Edit2, FileText, HandHeart, LayoutDashboard, Loader2, LogIn, MapPin, Medal, MessageCircle, Play, Plus, QrCode, RotateCcw, Search, Send, Share2, ShieldCheck, ShoppingBag, Sparkles, ThumbsDown, ThumbsUp, Trophy, TrendingUp, Tv, Users, WalletCards, X } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
@@ -126,6 +126,10 @@ export default function Home() {
   };
   const updatePosition=(team:"home"|"away",index:number,position:string)=>{const setter=team==="home"?setHome:setAway;setter(list=>list.map((p,i)=>i===index?{...p,position}:p));};
   const togglePlayer=(team:"home"|"away",index:number)=>{const setter=team==="home"?setHome:setAway;setter(list=>list.map((p,i)=>i===index?{...p,active:!p.active}:p));};
+  // True delete (only offered on benched rows): removal re-indexes matchups,
+  // and game ids are index-based, so recorded winners would attach to the
+  // wrong pairings — clear scores with an explanatory toast.
+  const removePlayer=(team:"home"|"away",index:number)=>{const setter=team==="home"?setHome:setAway;setter(list=>list.filter((_,i)=>i!==index));setWinners({});toast.success("Player removed. Scores cleared since matchups changed.");};
   // Dialog-driven add player flow: open dialog to collect name/position, then append
   const [playerDialogOpen, setPlayerDialogOpen] = useState(false);
   const [playerDialogTeam, setPlayerDialogTeam] = useState<"home"|"away">("home");
@@ -455,8 +459,8 @@ export default function Home() {
         <section className="match-location-bar"><label><MapPin/><span>PLAYING AT</span><input value={matchInfo.venue} onChange={e=>setMatchInfo(v=>({...v,venue:e.target.value}))}/></label><label><CalendarDays/><span>DATE</span><input type="date" value={matchInfo.date} onChange={e=>setMatchInfo(v=>({...v,date:e.target.value}))}/></label><label><Clock/><span>TIME</span><input value={matchInfo.time} onChange={e=>setMatchInfo(v=>({...v,time:e.target.value}))}/></label></section>
         {(()=>{const chance=Math.round(pctForTeam(homeTeam)/(pctForTeam(homeTeam)+pctForTeam(awayTeam))*100);return <section className="team-forecast"><div><p className="eyebrow"><Sparkles/> MATCH FORECAST</p><h3>{homeTeam} <b>{chance}%</b></h3></div><div className="forecast-track"><i style={{width:`${chance}%`}}/><span/></div><div><h3><b>{100-chance}%</b> {awayTeam}</h3><small>Estimated from current team records · not betting odds</small></div></section>})()}
         <div className="roster-grid">
-          <Roster title={homeTeam} players={home} team="home" onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onAdd={()=>showAddPlayerDialog("home")} onMove={movePlayer}/>
-          <Roster title={awayTeam} players={away} team="away" onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onAdd={()=>showAddPlayerDialog("away")} onMove={movePlayer}/>
+          <Roster title={homeTeam} players={home} team="home" onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onRemove={removePlayer} onAdd={()=>showAddPlayerDialog("home")} onMove={movePlayer}/>
+          <Roster title={awayTeam} players={away} team="away" onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onRemove={removePlayer} onAdd={()=>showAddPlayerDialog("away")} onMove={movePlayer}/>
         </div>
         <section className="round-section">
           <div className="round-head"><div><p className="eyebrow">MATCHUPS GENERATED</p><h3>Round {round+1}</h3></div>
@@ -916,7 +920,7 @@ function RivalCard({tone,label,title,record,percent,percentLabel,empty}:{tone:st
   return <article className={`rival-card ${tone}`}><span>{label}</span><strong>{title||empty}</strong><small>{record||"Waiting for head-to-head results"}</small>{percent!==undefined&&<div className="rival-percentage"><b>{percent}%</b><em>{percentLabel}</em><span><i style={{width:`${percent}%`}}/></span></div>}</article>
 }
 
-function Roster({title,players,team,onName,onPosition,onPay,onToggle,onAdd,onMove}:{title:string;players:Player[];team:"home"|"away";onName:(t:"home"|"away",i:number,n:string)=>void;onPosition:(t:"home"|"away",i:number,n:string)=>void;onPay:(t:"home"|"away",i:number)=>void;onToggle:(t:"home"|"away",i:number)=>void;onAdd:(t:"home"|"away")=>void;onMove:(t:"home"|"away",from:number,to:number)=>void}) {
+function Roster({title,players,team,onName,onPosition,onPay,onToggle,onRemove,onAdd,onMove}:{title:string;players:Player[];team:"home"|"away";onName:(t:"home"|"away",i:number,n:string)=>void;onPosition:(t:"home"|"away",i:number,n:string)=>void;onPay:(t:"home"|"away",i:number)=>void;onToggle:(t:"home"|"away",i:number)=>void;onRemove:(t:"home"|"away",i:number)=>void;onAdd:(t:"home"|"away")=>void;onMove:(t:"home"|"away",from:number,to:number)=>void}) {
   const [dragFrom,setDragFrom]=useState<number|null>(null);
   const [dragOver,setDragOver]=useState<number|null>(null);
   const endDrag=()=>{setDragFrom(null);setDragOver(null);};
@@ -936,7 +940,7 @@ function Roster({title,players,team,onName,onPosition,onPay,onToggle,onAdd,onMov
         <button aria-label={`Move ${labelFor(p,i)} up`} disabled={i===0} onClick={()=>onMove(team,i,i-1)}><ChevronUp/></button>
         <b>{i+1}</b>
         <button aria-label={`Move ${labelFor(p,i)} down`} disabled={i===players.length-1} onClick={()=>onMove(team,i,i+1)}><ChevronDown/></button>
-      </div><div className="player-fields"><input aria-label={`${title} player ${i+1}`} value={p.name} onChange={e=>onName(team,i,e.target.value)}/><input aria-label={`${title} player ${i+1} position`} value={p.position} onChange={e=>onPosition(team,i,e.target.value)} placeholder="Position"/></div><button className={`status ${p.payment}`} onClick={()=>onPay(team,i)}>{labels[p.payment]}</button><button className="roster-toggle" onClick={()=>onToggle(team,i)}>{p.active===false?"Restore":"Remove"}</button></div>)}
+      </div><div className="player-fields"><input aria-label={`${title} player ${i+1}`} value={p.name} onChange={e=>onName(team,i,e.target.value)}/><input aria-label={`${title} player ${i+1} position`} value={p.position} onChange={e=>onPosition(team,i,e.target.value)} placeholder="Position"/></div><button className={`status ${p.payment}`} onClick={()=>onPay(team,i)}>{labels[p.payment]}</button><button className="roster-toggle" onClick={()=>onToggle(team,i)}>{p.active===false?"Restore":"Remove"}</button>{p.active===false&&<button className="roster-remove" aria-label={`Delete ${labelFor(p,i)} from roster`} title="Delete from roster" onClick={()=>onRemove(team,i)}><X/></button>}</div>)}
     <button className="add-roster-spot" onClick={()=>onAdd(team)}><Plus/> Add roster spot</button>
     {players.length>1&&<p className="roster-hint">Drag a row, or use the arrows, to set the match order.</p>}</section>;
 }
