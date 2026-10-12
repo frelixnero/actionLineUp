@@ -10,9 +10,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --ignore-pattern .next",
-    "test": "node --experimental-strip-types tests/bracket.test.mjs && node --experimental-strip-types tests/formats.test.mjs && node --experimental-strip-types tests/mini-madness.test.mjs && node --experimental-strip-types tests/mini-bracket.test.mjs && node --experimental-strip-types tests/points-engine.test.mjs && node --experimental-strip-types tests/standings.test.mjs && node --experimental-strip-types tests/standings.api.test.mjs && node --experimental-strip-types tests/owner.test.mjs"
+    "test": "node --experimental-strip-types tests/bracket.test.mjs && node --experimental-strip-types tests/formats.test.mjs && node --experimental-strip-types tests/mini-madness.test.mjs && node --experimental-strip-types tests/mini-bracket.test.mjs && node --experimental-strip-types tests/points-engine.test.mjs && node --experimental-strip-types tests/standings.test.mjs && node --experimental-strip-types tests/standings.api.test.mjs && node --experimental-strip-types tests/owner.test.mjs && node --experimental-strip-types tests/scorecard.test.mjs"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.112.4",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",

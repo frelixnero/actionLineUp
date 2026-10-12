@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { AlertTriangle, BarChart3, Bell, BookOpen, CalendarDays, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Cloud, CloudOff, RefreshCw, CircleDollarSign, Clock, Crown, Edit2, FileText, HandHeart, LayoutDashboard, Loader2, LogIn, MapPin, Medal, MessageCircle, Play, Plus, QrCode, RotateCcw, Search, Send, Share2, ShieldCheck, ShoppingBag, Sparkles, ThumbsDown, ThumbsUp, Trophy, TrendingUp, Tv, Users, WalletCards, X } from "lucide-react";
+import { AlertTriangle, BarChart3, Bell, BookOpen, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Cloud, CloudOff, RefreshCw, CircleDollarSign, Clock, Crown, Edit2, FileText, HandHeart, LayoutDashboard, Loader2, LogIn, MapPin, Medal, MessageCircle, Play, Plus, QrCode, RotateCcw, Search, Send, Share2, ShieldCheck, ShoppingBag, Sparkles, ThumbsDown, ThumbsUp, Trophy, TrendingUp, Tv, Users, WalletCards, X } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import TournamentDesk from "./tournament";
+import ScorecardScanModal from "@/components/ScorecardScanModal";
+import { mapScannedToWinners } from "@/lib/scorecard-validate";
 
 type Payment = "paid" | "due" | "pending";
 type Player = { name: string; position: string; payment: Payment; active?: boolean };
@@ -74,7 +76,6 @@ export default function Home() {
   const [away, setAway] = useState<Player[]>(initialAway);
   const [round, setRound] = useState(0);
   const [winners, setWinners] = useState<Record<string, Winner>>({ "0-0": "home", "0-1": "away", "0-2": "home" });
-  const [sheetName, setSheetName] = useState("");
   const [raised, setRaised] = useState(425);
   const [matchInfo,setMatchInfo]=useState({date:"2026-09-22",time:"7:30 PM",venue:"The Silver Cue Tavern, Seguin"});
   const [leagueName,setLeagueName]=useState("Seguin 8Ball League");
@@ -240,6 +241,49 @@ export default function Home() {
     setWinners({ "0-0": "home", "0-1": "away", "0-2": "home", "1-0": "away", "1-1": "home" });
     setMatchInfo({ date: "2026-09-22", time: "7:30 PM", venue: "The Silver Cue Tavern, Seguin" });
     toast.success("Loaded demo match with 5 scored games.");
+  };
+
+  // Apply a reviewed scan to the board. New names merge into rosters (8 cap);
+  // reviewed rows map onto matchup ids by name pairs, so anything the board
+  // cannot place stays manual instead of silently attaching to the wrong game.
+  const applyScan = (payload: { games: { gameNumber: number; home: string; visitor: string; winner: "home" | "visitor" | "unknown" }[]; raceTarget: number | null }) => {
+    const norm = (s: string) => s.trim().toLowerCase();
+    const merge = (list: Player[], names: string[]) => {
+      const seen = new Set(list.map(p => norm(p.name)));
+      const out = [...list];
+      for (const raw of names) {
+        const name = raw.trim();
+        if (!name || seen.has(norm(name))) continue;
+        if (out.length >= 8) break;
+        seen.add(norm(name));
+        out.push({ name, position: "Player", payment: "due" as Payment, active: true });
+      }
+      return out;
+    };
+    const newHome = merge(home, payload.games.map(g => g.home));
+    const newAway = merge(away, payload.games.map(g => g.visitor));
+    const ah = newHome.filter(p => p.active !== false);
+    const aa = newAway.filter(p => p.active !== false);
+    const rot = buildRotation(Math.min(ah.length, aa.length));
+    const board = rot.flatMap((order: number[], r: number) => order.map((a: number, h: number) => ({
+      id: `${r}-${h}`, homeName: ah[h]?.name ?? "", awayName: aa[a]?.name ?? "",
+    })));
+    const { winners: mapped, unmatched } = mapScannedToWinners(
+      payload.games.map(g => ({ gameNumber: g.gameNumber, homePlayerRaw: g.home, visitorPlayerRaw: g.visitor, winner: g.winner })),
+      board,
+    );
+    setHome(newHome);
+    setAway(newAway);
+    setWinners(v => ({ ...v, ...mapped }));
+    if (payload.raceTarget && payload.raceTarget > 0) {
+      setScoring(v => ({ ...v, matchWinAt: payload.raceTarget as number }));
+    }
+    const applied = Object.keys(mapped).length;
+    if (unmatched.length > 0) {
+      toast.info(`${applied} game${applied === 1 ? "" : "s"} applied · ${unmatched.length} need manual scoring (games ${unmatched.slice(0, 6).join(", ")}).`);
+    } else {
+      toast.success(`${applied} scanned games applied to the scorecard.`);
+    }
   };
 
   return (
@@ -447,14 +491,15 @@ export default function Home() {
               {syncBusy ? <Loader2 className="animate-spin" size={14}/> : <Cloud size={14}/>} {syncBusy ? "Publishing..." : "Publish lineup"}
             </button>}
           </div>
-          <Dialog><DialogTrigger asChild><button className="scan-button"><Camera/> Scan score sheet</button></DialogTrigger>
-            <DialogContent className="scan-dialog"><DialogHeader><DialogTitle>Scan a paper score sheet</DialogTitle>
-              <DialogDescription>Take a clear picture, then confirm the names before creating the lineup.</DialogDescription></DialogHeader>
-              <label className="camera-drop"><Camera size={34}/><strong>{sheetName||"Open camera or choose photo"}</strong><span>JPG, PNG or HEIC</span>
-                <input type="file" accept="image/*" capture="environment" onChange={e=>{const n=e.target.files?.[0]?.name;if(n){setSheetName(n);toast.success("Sheet attached. Confirm the roster names.");}}}/></label>
-              {sheetName&&<div className="scan-ready"><Check/> Photo ready for roster review</div>}
-            </DialogContent>
-          </Dialog>
+          <ScorecardScanModal
+            homeTeam={homeTeam}
+            awayTeam={awayTeam}
+            homeNames={home.map(p => p.name)}
+            awayNames={away.map(p => p.name)}
+            lineupId={lineupId}
+            raceTarget={scoring.matchWinAt}
+            onApply={applyScan}
+          />
         </div>
         <section className="match-location-bar"><label><MapPin/><span>PLAYING AT</span><input value={matchInfo.venue} onChange={e=>setMatchInfo(v=>({...v,venue:e.target.value}))}/></label><label><CalendarDays/><span>DATE</span><input type="date" value={matchInfo.date} onChange={e=>setMatchInfo(v=>({...v,date:e.target.value}))}/></label><label><Clock/><span>TIME</span><input value={matchInfo.time} onChange={e=>setMatchInfo(v=>({...v,time:e.target.value}))}/></label></section>
         {(()=>{const chance=Math.round(pctForTeam(homeTeam)/(pctForTeam(homeTeam)+pctForTeam(awayTeam))*100);return <section className="team-forecast"><div><p className="eyebrow"><Sparkles/> MATCH FORECAST</p><h3>{homeTeam} <b>{chance}%</b></h3></div><div className="forecast-track"><i style={{width:`${chance}%`}}/><span/></div><div><h3><b>{100-chance}%</b> {awayTeam}</h3><small>Estimated from current team records · not betting odds</small></div></section>})()}
