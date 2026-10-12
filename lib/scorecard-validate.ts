@@ -10,7 +10,7 @@
 
 import { normalizeName } from "./roster-matcher.ts";
 
-export type GameWinner = "home" | "visitor" | "unknown";
+export type GameWinner = "home" | "visitor" | "unplayed" | "unknown";
 
 export type ScannedGame = {
   gameNumber: number;
@@ -32,6 +32,7 @@ export type ParsedScorecard = {
   homeTotal: number;
   visitorTotal: number;
   raceTarget?: number | null;
+  rawNotes?: string;
   games: ScannedGame[];
 };
 
@@ -57,7 +58,7 @@ const num = (v: unknown): number | undefined =>
 /** Coerce loose vision JSON into a ParsedScorecard. Never throws. */
 export function coerceScorecard(raw: unknown): ParsedScorecard {
   const fallback: ParsedScorecard = {
-    homeTeam: "", awayTeam: "", homeTotal: 0, visitorTotal: 0, raceTarget: null, games: [],
+    homeTeam: "", awayTeam: "", homeTotal: 0, visitorTotal: 0, raceTarget: null, rawNotes: undefined, games: [],
   };
   if (!raw || typeof raw !== "object") return fallback;
   const r = raw as Record<string, unknown>;
@@ -75,7 +76,7 @@ export function coerceScorecard(raw: unknown): ParsedScorecard {
     const game = (g ?? {}) as Record<string, unknown>;
     const winnerRaw = typeof game.winner === "string" ? game.winner.toLowerCase() : "";
     const winner: GameWinner =
-      winnerRaw === "home" || winnerRaw === "visitor" ? winnerRaw : "unknown";
+      winnerRaw === "home" || winnerRaw === "visitor" || winnerRaw === "unplayed" ? winnerRaw : "unknown";
     return {
       gameNumber: num(game.gameNumber) ?? i + 1,
       roundNumber: num(game.roundNumber),
@@ -92,6 +93,7 @@ export function coerceScorecard(raw: unknown): ParsedScorecard {
   return {
     leagueName: str(r.leagueName) || undefined,
     homeTeam, awayTeam, homeTotal, visitorTotal, raceTarget, games,
+    rawNotes: str(r.rawNotes) || undefined,
   };
 }
 
@@ -117,6 +119,7 @@ export function validateScorecard(
     if (!normalizeName(g.homePlayerRaw) || !normalizeName(g.visitorPlayerRaw)) {
       warnings.push({ code: "MISSING_NAMES", message: `Game ${g.gameNumber} is missing a player name.`, gameNumber: g.gameNumber });
     }
+    // "unplayed" is an explicit verdict (post-race games), not a gap.
     if (g.winner === "unknown") {
       warnings.push({ code: "UNKNOWN_WINNER", message: `Game ${g.gameNumber} has no clear winner — needs review.`, gameNumber: g.gameNumber });
     }
@@ -158,7 +161,7 @@ export function validateScorecard(
       if (g.winner === "home") h++;
       if (g.winner === "visitor") v++;
       if (decidedAt === null && (h >= race || v >= race)) decidedAt = g.gameNumber;
-      else if (decidedAt !== null && g.winner !== "unknown") {
+      else if (decidedAt !== null && (g.winner === "home" || g.winner === "visitor")) {
         warnings.push({ code: "GAMES_AFTER_RACE", message: `Game ${g.gameNumber} was played after the race to ${race} was decided at game ${decidedAt}.`, gameNumber: g.gameNumber });
         break;
       }
@@ -179,13 +182,14 @@ export type BoardMatchup = { id: string; homeName: string; awayName: string };
 export function mapScannedToWinners(
   games: ScannedGame[],
   matchups: BoardMatchup[],
-): { winners: Record<string, "home" | "away">; unmatched: number[] } {
+): { winners: Record<string, "home" | "away">; unmatched: number[]; skipped: number[] } {
   const winners: Record<string, "home" | "away"> = {};
   const unmatched: number[] = [];
+  const skipped: number[] = [];
   const used = new Set<string>();
   for (const g of games) {
-    if (g.winner !== "home" && g.winner !== "visitor") {
-      unmatched.push(g.gameNumber);
+    if (g.winner === "unplayed") {
+      skipped.push(g.gameNumber);
       continue;
     }
     const hn = normalizeName(g.homePlayerRaw);
@@ -200,5 +204,5 @@ export function mapScannedToWinners(
     used.add(hit.id);
     winners[hit.id] = g.winner === "home" ? "home" : "away";
   }
-  return { winners, unmatched };
+  return { winners, unmatched, skipped };
 }

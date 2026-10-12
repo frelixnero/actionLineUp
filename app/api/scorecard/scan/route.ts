@@ -3,7 +3,16 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { currentUser } from "@/lib/auth";
 import { canEditLineup, LEAGUE_KEY } from "@/lib/league";
 import { adminSupabase } from "@/lib/supabase";
-import { coerceScorecard, validateScorecard } from "@/lib/scorecard-validate";
+import { coerceScorecard, validateScorecard, type ParsedScorecard, type ScorecardWarning } from "@/lib/scorecard-validate";
+import {
+  DEFAULT_SCAN_MODELS,
+  SCORECARD_SCHEMA,
+  classifyVisionError,
+  extractJsonSpan,
+  extractResponseText,
+  parseModelCascade,
+  sleep,
+} from "@/lib/gemini-scan";
 import { matchPlayerToRoster } from "@/lib/roster-matcher";
 
 export const runtime = "nodejs";
@@ -71,7 +80,9 @@ Schema:
 Rules:
 - gameNumber follows the sheet's printed game order (1..N across rounds).
 - winner is "unknown" when the W/L mark is illegible or crossed out — never guess.
+- winner is "unplayed" for games left blank because the match already ended (race reached).
 - raceTarget is the printed race-to number (e.g. 13) or null if the sheet shows none.
+- rawNotes: transcribe any handwritten dues, reminders, or fee notes verbatim.
 - Transcribe names exactly as written; roster matching happens downstream.
 - If the layout is not a recognizable score matrix, return {"unknownLayout": true} plus whatever partial games you found.`;
 
@@ -168,7 +179,15 @@ export async function POST(request: Request) {
     // Audit write is best-effort; the scan itself can proceed.
   }
 
-  const { data: signed } = await adminSupabase().storage.from(BUCKET).createSignedUrl(storagePath, 60 * 60);
+  // Signed preview URL degrades gracefully: a storage hiccup must not
+  // crash the scan (that used to surface as a gateway 502).
+  let imageUrl: string | null = null;
+  try {
+    const { data: signed } = await adminSupabase().storage.from(BUCKET).createSignedUrl(storagePath, 60 * 60);
+    imageUrl = signed?.signedUrl ?? null;
+  } catch (error) {
+    console.error("[scorecard-scan] stage=signed-url", error instanceof Error ? error.message : error);
+  }
 
   const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   if (!apiKey) {
@@ -177,7 +196,7 @@ export async function POST(request: Request) {
       ok: true,
       visionAvailable: false,
       scanPath: storagePath,
-      imageUrl: signed?.signedUrl ?? null,
+      imageUrl,
       parsed: null,
       matches: [],
       warnings: [{ code: "UNKNOWN_LAYOUT", message: "Automatic reading is not configured. Score from the photo manually." }],
@@ -201,30 +220,123 @@ export async function POST(request: Request) {
     }
   }
 
-  try {
-    const bytes = Buffer.from(await file.arrayBuffer()).toString("base64");
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
-      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 },
-    });
-    const result = await model.generateContent([
-      { text: SCAN_PROMPT },
-      { inlineData: { data: bytes, mimeType: mime } },
-    ]);
-    const parsed = JSON.parse(stripFences(result.response.text() ?? "{}")) as Record<string, unknown>;
-    const games = Array.isArray(parsed.games) ? parsed.games : [];
+  // Vision cascade: each model gets up to two attempts. Transient
+  // overload (429/503) is retried with backoff, unknown-model errors (404)
+  // fall through to the next model, and safety blocks abort immediately.
+  // Every failure logs its stage so the next production report is
+  // diagnosable from the server logs instead of a bare catch block.
+  // Override the cascade with GEMINI_SCAN_MODELS="model-a,model-b" after
+  // verifying names against GET /v1beta/models for the project.
+  type VisionAttempt = { model: string; status: "SUCCESS" | "FAILED"; durationMs: number; error?: string };
+  type VisionFailure = { stage: string; kind: string; model: string; detail?: string };
+  let outcome: { card: ParsedScorecard; warnings: ScorecardWarning[]; modelUsed: string } | null = null;
+  let failure: VisionFailure | null = null;
+  let aborted = false;
+  const attempts: VisionAttempt[] = [];
+  const scanStart = Date.now();
 
-    const card = coerceScorecard({
-      ...parsed,
-      homeTeam: (parsed.homeTeam as string) || homeTeam,
-      awayTeam: ((parsed.awayTeam ?? parsed.visitorTeam) as string) || awayTeam,
-      raceTarget: (parsed.raceTarget as number) ?? (Number.isFinite(raceTargetHint) ? raceTargetHint : null),
-    });
-    const { warnings } = validateScorecard(card);
-    if (parsed.unknownLayout === true && games.length === 0) {
-      warnings.unshift({ code: "UNKNOWN_LAYOUT", message: "This page was not recognized as a score matrix — review every row." });
+  const models = parseModelCascade(process.env.GEMINI_SCAN_MODELS, DEFAULT_SCAN_MODELS);
+  const bytes = Buffer.from(await file.arrayBuffer()).toString("base64");
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  for (const modelName of models) {
+    if (outcome || aborted) break;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const tag = `model=${modelName} attempt=${attempt}`;
+      const attemptStart = Date.now();
+      const logAttempt = (status: "SUCCESS" | "FAILED", error?: string) =>
+        attempts.push({ model: modelName, status, durationMs: Date.now() - attemptStart, ...(error ? { error } : {}) });
+      let rawText: string | null = null;
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: SCORECARD_SCHEMA,
+            maxOutputTokens: 8192,
+          },
+        });
+        const result = await model.generateContent([
+          { text: SCAN_PROMPT },
+          { inlineData: { data: bytes, mimeType: mime } },
+        ]);
+        const extracted = extractResponseText(result.response);
+        if (extracted.blocked) {
+          failure = { stage: "vision-blocked", kind: "blocked", model: modelName, detail: extracted.blockReason };
+          console.error(`[scorecard-scan] stage=vision-blocked ${tag} reason=${extracted.blockReason ?? "unknown"}`);
+          logAttempt("FAILED", `blocked: ${extracted.blockReason ?? "unknown"}`);
+          aborted = true;
+          break;
+        }
+        if (!extracted.text) {
+          failure = { stage: "vision-extract", kind: "bad_response", model: modelName, detail: "empty response text" };
+          console.error(`[scorecard-scan] stage=vision-extract ${tag} empty response text`);
+          logAttempt("FAILED", "empty response text");
+          break; // Next model; an empty reply will not improve on retry.
+        }
+        rawText = extracted.text;
+      } catch (error) {
+        const { kind } = classifyVisionError(error);
+        const detail = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+        failure = { stage: "vision-generate", kind, model: modelName, detail };
+        console.error(`[scorecard-scan] stage=vision-generate ${tag} kind=${kind} error=${detail}`);
+        logAttempt("FAILED", detail);
+        if (kind === "rate_limited" && attempt === 1) {
+          await sleep(2000);
+          continue;
+        }
+        break; // Unknown models, blocks, and spent retries move to the next model.
+      }
+      try {
+        const parsed = JSON.parse(extractJsonSpan(stripFences(rawText ?? ""))) as Record<string, unknown>;
+        const games = Array.isArray(parsed.games) ? parsed.games : [];
+        const card = coerceScorecard({
+          ...parsed,
+          homeTeam: (parsed.homeTeam as string) || homeTeam,
+          awayTeam: ((parsed.awayTeam ?? parsed.visitorTeam) as string) || awayTeam,
+          raceTarget: (parsed.raceTarget as number) ?? (Number.isFinite(raceTargetHint) ? raceTargetHint : null),
+        });
+        const { warnings } = validateScorecard(card);
+        if (parsed.unknownLayout === true && games.length === 0) {
+          warnings.unshift({ code: "UNKNOWN_LAYOUT", message: "This page was not recognized as a score matrix — review every row." });
+        }
+        outcome = { card, warnings, modelUsed: modelName };
+        failure = null;
+        logAttempt("SUCCESS");
+      } catch (error) {
+        const detail = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+        failure = { stage: "vision-parse", kind: "bad_response", model: modelName, detail };
+        console.error(`[scorecard-scan] stage=vision-parse ${tag} error=${detail}`);
+        logAttempt("FAILED", detail);
+        if (attempt === 1) continue; // Malformed JSON deserves one fresh response.
+      }
+      break;
     }
+  }
+
+  if (!outcome) {
+    const message =
+      failure?.stage === "vision-blocked"
+        ? "The sheet was refused by the reader (content filter). Score from the photo manually."
+        : failure?.kind === "rate_limited"
+          ? "The reader is overloaded right now. Your photo is saved — wait a minute and try again."
+          : "The sheet could not be read automatically. Score from the photo manually.";
+    return NextResponse.json(
+      {
+        ok: false,
+        scanPath: storagePath,
+        imageUrl,
+        stage: failure?.stage ?? "vision-generate",
+        model: failure?.model ?? null,
+        attempts,
+        totalDurationMs: Date.now() - scanStart,
+        error: message,
+      },
+      { status: failure?.kind === "rate_limited" ? 429 : 502 },
+    );
+  }
+
+  const { card, warnings, modelUsed } = outcome;
 
     const matches = card.games.map((g) => ({
       gameNumber: g.gameNumber,
@@ -236,20 +348,12 @@ export async function POST(request: Request) {
       ok: true,
       visionAvailable: true,
       scanPath: storagePath,
-      imageUrl: signed?.signedUrl ?? null,
+      imageUrl,
+      modelUsed,
+      attempts,
+      totalDurationMs: Date.now() - scanStart,
       parsed: card,
       matches,
       warnings,
     });
-  } catch {
-    return NextResponse.json(
-      {
-        ok: false,
-        scanPath: storagePath,
-        imageUrl: signed?.signedUrl ?? null,
-        error: "The sheet could not be read automatically. Score from the photo manually.",
-      },
-      { status: 502 },
-    );
-  }
 }

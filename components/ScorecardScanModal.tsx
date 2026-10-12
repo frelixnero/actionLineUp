@@ -16,7 +16,7 @@ export type ScannedRow = {
   gameNumber: number;
   home: string;
   visitor: string;
-  winner: "home" | "visitor" | "unknown";
+  winner: "home" | "visitor" | "unplayed" | "unknown";
   needsReview: boolean;
 };
 
@@ -57,7 +57,12 @@ export default function ScorecardScanModal({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [scanPath, setScanPath] = useState<string | null>(null);
   const [detectedRace, setDetectedRace] = useState<number | null>(null);
+  const [rawNotes, setRawNotes] = useState<string | null>(null);
+  const [modelUsed, setModelUsed] = useState<string | null>(null);
   const [manualMode, setManualMode] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [rotation, setRotation] = useState(0);
+  const [contrast, setContrast] = useState(false);
 
   const pickFile = (f: File | undefined) => {
     if (!f) return;
@@ -70,6 +75,11 @@ export default function ScorecardScanModal({
     setRows([]);
     setWarnings([]);
     setManualMode(false);
+    setRawNotes(null);
+    setModelUsed(null);
+    setZoom(1);
+    setRotation(0);
+    setContrast(false);
   };
 
   const scan = async () => {
@@ -101,7 +111,7 @@ export default function ScorecardScanModal({
       }
       const games = (d.parsed.games ?? []) as {
         gameNumber: number; homePlayerRaw: string; visitorPlayerRaw: string;
-        winner: "home" | "visitor" | "unknown";
+        winner: "home" | "visitor" | "unplayed" | "unknown";
       }[];
       const byGame = new Map<number, { home: unknown; visitor: unknown }>();
       for (const m of (d.matches ?? []) as { gameNumber: number; home: unknown; visitor: unknown }[]) {
@@ -120,10 +130,13 @@ export default function ScorecardScanModal({
           const h = resolved(g.homePlayerRaw, m?.home);
           const v = resolved(g.visitorPlayerRaw, m?.visitor);
           const review = g.winner === "unknown" || h.review || v.review;
-          return { gameNumber: g.gameNumber, home: h.name, visitor: v.name, winner: g.winner, needsReview: review };
+          const winner = g.winner === "home" || g.winner === "visitor" || g.winner === "unplayed" ? g.winner : "unknown";
+          return { gameNumber: g.gameNumber, home: h.name, visitor: v.name, winner, needsReview: review };
         }),
       );
       setDetectedRace(typeof d.parsed.raceTarget === "number" ? d.parsed.raceTarget : null);
+      setRawNotes(typeof d.parsed.rawNotes === "string" && d.parsed.rawNotes ? d.parsed.rawNotes : null);
+      setModelUsed(typeof d.modelUsed === "string" ? d.modelUsed : null);
       setStage("review");
       const flagged = (d.warnings ?? []).length;
       toast.success(flagged > 0 ? `Scan complete with ${flagged} flag${flagged === 1 ? "" : "s"} to review.` : "Scan complete. Review and approve.");
@@ -143,9 +156,9 @@ export default function ScorecardScanModal({
   };
 
   const approve = () => {
-    const scored = rows.filter((r) => r.winner === "home" || r.winner === "visitor");
-    if (rows.length > 0 && scored.length === 0) {
-      toast.error("Mark at least one winner before approving.");
+    const unresolved = rows.filter((r) => r.winner === "unknown");
+    if (rows.length > 0 && unresolved.length > 0) {
+      toast.error(`${unresolved.length} game${unresolved.length === 1 ? "" : "s"} still need a winner (or mark Skipped).`);
       return;
     }
     onApply({ games: rows, raceTarget: detectedRace, scanPath });
@@ -207,12 +220,34 @@ export default function ScorecardScanModal({
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 12 }}>
               <div>
                 {shownImage ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={shownImage} alt="Scanned score sheet" style={{ width: "100%", borderRadius: 10, border: "1px solid #38413d" }} />
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={shownImage}
+                      alt="Scanned score sheet"
+                      style={{
+                        width: "100%", borderRadius: 10, border: "1px solid #38413d",
+                        transform: `scale(${zoom}) rotate(${rotation}deg)`,
+                        filter: contrast ? "contrast(180%) brightness(105%)" : "none",
+                      }}
+                    />
+                    <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                      <button className="quiet-button" onClick={() => setZoom((z) => Math.min(z + 0.25, 3))} style={{ fontSize: 11, padding: "4px 8px" }}>Zoom +</button>
+                      <button className="quiet-button" onClick={() => setZoom((z) => Math.max(z - 0.25, 0.5))} style={{ fontSize: 11, padding: "4px 8px" }}>Zoom −</button>
+                      <button className="quiet-button" onClick={() => setRotation((r) => (r + 90) % 360)} style={{ fontSize: 11, padding: "4px 8px" }}>Rotate</button>
+                      <button className="quiet-button" onClick={() => setContrast((c) => !c)} style={{ fontSize: 11, padding: "4px 8px" }}>{contrast ? "Normal" : "Contrast"}</button>
+                    </div>
+                  </>
                 ) : (
                   <p style={{ fontSize: 12 }}>No image preview.</p>
                 )}
                 {detectedRace ? <p style={{ fontSize: 12 }}>Detected race to {detectedRace}.</p> : null}
+                {modelUsed ? <p style={{ fontSize: 11, opacity: 0.7 }}>Read by {modelUsed}.</p> : null}
+                {rawNotes ? (
+                  <div style={{ fontSize: 12, marginTop: 8, padding: 8, borderRadius: 8, background: "#0b0f0d", border: "1px solid #38413d" }}>
+                    <strong>Sheet notes:</strong> {rawNotes}
+                  </div>
+                ) : null}
               </div>
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -264,6 +299,12 @@ export default function ScorecardScanModal({
                           onClick={() => setRow(r.gameNumber, { winner: "visitor" })}
                           style={{ fontSize: 11, padding: "6px 4px" }}
                         >{r.winner === "visitor" && <Check size={12} />} Visitor</button>
+                        <button
+                          className={r.winner === "unplayed" ? "confirmed" : "quiet-button"}
+                          onClick={() => setRow(r.gameNumber, { winner: "unplayed" })}
+                          style={{ fontSize: 11, padding: "6px 4px" }}
+                          title="Game was never played (match ended early)"
+                        >{r.winner === "unplayed" && <Check size={12} />} Skip</button>
                       </div>
                     </div>
                   ))}

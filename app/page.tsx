@@ -246,7 +246,7 @@ export default function Home() {
   // Apply a reviewed scan to the board. New names merge into rosters (8 cap);
   // reviewed rows map onto matchup ids by name pairs, so anything the board
   // cannot place stays manual instead of silently attaching to the wrong game.
-  const applyScan = (payload: { games: { gameNumber: number; home: string; visitor: string; winner: "home" | "visitor" | "unknown" }[]; raceTarget: number | null }) => {
+  const applyScan = (payload: { games: { gameNumber: number; home: string; visitor: string; winner: "home" | "visitor" | "unplayed" | "unknown" }[]; raceTarget: number | null }) => {
     const norm = (s: string) => s.trim().toLowerCase();
     const merge = (list: Player[], names: string[]) => {
       const seen = new Set(list.map(p => norm(p.name)));
@@ -268,7 +268,7 @@ export default function Home() {
     const board = rot.flatMap((order: number[], r: number) => order.map((a: number, h: number) => ({
       id: `${r}-${h}`, homeName: ah[h]?.name ?? "", awayName: aa[a]?.name ?? "",
     })));
-    const { winners: mapped, unmatched } = mapScannedToWinners(
+    const { winners: mapped, unmatched, skipped } = mapScannedToWinners(
       payload.games.map(g => ({ gameNumber: g.gameNumber, homePlayerRaw: g.home, visitorPlayerRaw: g.visitor, winner: g.winner })),
       board,
     );
@@ -279,10 +279,11 @@ export default function Home() {
       setScoring(v => ({ ...v, matchWinAt: payload.raceTarget as number }));
     }
     const applied = Object.keys(mapped).length;
+    const skippedNote = skipped.length > 0 ? ` · ${skipped.length} skipped (unplayed)` : "";
     if (unmatched.length > 0) {
-      toast.info(`${applied} game${applied === 1 ? "" : "s"} applied · ${unmatched.length} need manual scoring (games ${unmatched.slice(0, 6).join(", ")}).`);
+      toast.info(`${applied} game${applied === 1 ? "" : "s"} applied${skippedNote} · ${unmatched.length} need manual scoring (games ${unmatched.slice(0, 6).join(", ")}).`);
     } else {
-      toast.success(`${applied} scanned games applied to the scorecard.`);
+      toast.success(`${applied} scanned games applied to the scorecard${skippedNote}.`);
     }
   };
 

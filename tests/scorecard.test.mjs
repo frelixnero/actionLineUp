@@ -1,5 +1,6 @@
 import { matchPlayerToRoster, matchRosterNames, normalizeName, levenshtein } from "../lib/roster-matcher.ts";
 import { coerceScorecard, validateScorecard, mapScannedToWinners } from "../lib/scorecard-validate.ts";
+import { classifyVisionError, extractResponseText, extractJsonSpan, parseModelCascade } from "../lib/gemini-scan.ts";
 
 let pass = 0, fail = 0;
 const eq = (name, got, want) => {
@@ -116,6 +117,62 @@ ok("levenshtein near-miss is small", levenshtein("gorgie", "georgie") <= 2);
   ], matchups);
   eq("name-pair maps to matchup id", winners, { "0-0": "home" });
   eq("unmatched games reported", unmatched, [2, 3]);
+}
+
+// ------------------------------------------------------- vision error paths
+{
+  eq("503 classifies as rate_limited", classifyVisionError(new Error("[503 Service Unavailable] overloaded")).kind, "rate_limited");
+  eq("429 classifies as rate_limited", classifyVisionError(new Error("[429 Too Many Requests] quota exceeded")).kind, "rate_limited");
+  eq("404 classifies as model_not_found", classifyVisionError(new Error("[404 Not Found] model is no longer available")).kind, "model_not_found");
+  eq("safety text classifies as blocked", classifyVisionError(new Error("response blocked due to safety")).kind, "blocked");
+  eq("mystery error is unknown", classifyVisionError(new Error("socket hangup")).kind, "unknown");
+
+  const blocked = extractResponseText({ candidates: [{ finishReason: "SAFETY" }], promptFeedback: undefined, text: () => { throw new Error("No text part"); } });
+  eq("safety finish never throws", blocked.blocked, true);
+  eq("safety finish reports reason", blocked.blockReason, "SAFETY");
+
+  const promptBlocked = extractResponseText({ promptFeedback: { blockReason: "SAFETY" } });
+  eq("prompt block reported", promptBlocked.blocked, true);
+
+  const good = extractResponseText({ candidates: [{ finishReason: "STOP" }], text: () => '{"a":1}' });
+  eq("clean response passes through", good, { text: '{"a":1}', blocked: false });
+
+  const empty = extractResponseText({ candidates: [] });
+  eq("no candidates is not blocked", empty, { text: null, blocked: false });
+
+  eq("json span skips prose", extractJsonSpan('Sure! ```json\n{"a": 1}\n``` done'), '{"a": 1}');
+  eq("json span handles nesting", extractJsonSpan('x {"a": {"b": 2}} y'), '{"a": {"b": 2}}');
+
+  eq("env cascade wins", parseModelCascade("gemini-x, gemini-y", ["gemini-2.0-flash"]), ["gemini-x", "gemini-y"]);
+  eq("empty env falls back", parseModelCascade("", ["gemini-2.0-flash"]), ["gemini-2.0-flash"]);
+  eq("cascade dedupes and caps", parseModelCascade("a,a,b,c,d", ["z"]), ["a", "b", "c"]);
+}
+
+// ------------------------------------------------- unplayed + raw notes
+{
+  const card = coerceScorecard({
+    homeTeam: "H", awayTeam: "V", homeTotal: 2, visitorTotal: 0, raceTarget: 2,
+    rawNotes: "$60 dues via Cash App",
+    games: [
+      { gameNumber: 1, homePlayer: "A", visitorPlayer: "B", winner: "home" },
+      { gameNumber: 2, homePlayer: "A", visitorPlayer: "C", winner: "home" },
+      { gameNumber: 3, homePlayer: "A", visitorPlayer: "D", winner: "unplayed" },
+    ],
+  });
+  eq("raw notes coerce through", card.rawNotes, "$60 dues via Cash App");
+  eq("unplayed survives coerce", card.games[2].winner, "unplayed");
+  const res = validateScorecard(card);
+  eq("explicit unplayed needs no review flag", res.warnings.some(w => w.code === "UNKNOWN_WINNER"), false);
+  eq("post-race unplayed raises no warning", res.warnings.some(w => w.code === "GAMES_AFTER_RACE"), false);
+  eq("unplayed sheet validates", res.valid, true);
+
+  const mapped = mapScannedToWinners(
+    card.games.map(g => ({ gameNumber: g.gameNumber, homePlayerRaw: g.homePlayerRaw, visitorPlayerRaw: g.visitorPlayerRaw, winner: g.winner })),
+    [{ id: "0-0", homeName: "A", awayName: "B" }],
+  );
+  eq("played game maps", mapped.winners, { "0-0": "home" });
+  eq("unplayed reported as skipped", mapped.skipped, [3]);
+  eq("nothing left unmatched", mapped.unmatched, [2]);
 }
 
 console.log(`\nscorecard: ${pass} passed, ${fail} failed`);
