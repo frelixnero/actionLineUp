@@ -24,6 +24,8 @@ export type ScanApplyPayload = {
   games: ScannedRow[];
   raceTarget: number | null;
   scanPath: string | null;
+  homeTeam: string | null;
+  awayTeam: string | null;
 };
 
 type Props = {
@@ -57,6 +59,8 @@ export default function ScorecardScanModal({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [scanPath, setScanPath] = useState<string | null>(null);
   const [detectedRace, setDetectedRace] = useState<number | null>(null);
+  const [detectedHome, setDetectedHome] = useState<string | null>(null);
+  const [detectedAway, setDetectedAway] = useState<string | null>(null);
   const [rawNotes, setRawNotes] = useState<string | null>(null);
   const [modelUsed, setModelUsed] = useState<string | null>(null);
   const [manualMode, setManualMode] = useState(false);
@@ -77,6 +81,8 @@ export default function ScorecardScanModal({
     setManualMode(false);
     setRawNotes(null);
     setModelUsed(null);
+    setDetectedHome(null);
+    setDetectedAway(null);
     setZoom(1);
     setRotation(0);
     setContrast(false);
@@ -135,6 +141,8 @@ export default function ScorecardScanModal({
         }),
       );
       setDetectedRace(typeof d.parsed.raceTarget === "number" ? d.parsed.raceTarget : null);
+      setDetectedHome(typeof d.parsed.homeTeam === "string" && d.parsed.homeTeam.trim() ? d.parsed.homeTeam.trim() : null);
+      setDetectedAway(typeof d.parsed.awayTeam === "string" && d.parsed.awayTeam.trim() ? d.parsed.awayTeam.trim() : null);
       setRawNotes(typeof d.parsed.rawNotes === "string" && d.parsed.rawNotes ? d.parsed.rawNotes : null);
       setModelUsed(typeof d.modelUsed === "string" ? d.modelUsed : null);
       setStage("review");
@@ -161,7 +169,7 @@ export default function ScorecardScanModal({
       toast.error(`${unresolved.length} game${unresolved.length === 1 ? "" : "s"} still need a winner (or mark Skipped).`);
       return;
     }
-    onApply({ games: rows, raceTarget: detectedRace, scanPath });
+    onApply({ games: rows, raceTarget: detectedRace, scanPath, homeTeam: detectedHome, awayTeam: detectedAway });
     setOpen(false);
     toast.success("Scan applied to the scorecard. Publish to share it.");
   };
@@ -242,6 +250,9 @@ export default function ScorecardScanModal({
                   <p style={{ fontSize: 12 }}>No image preview.</p>
                 )}
                 {detectedRace ? <p style={{ fontSize: 12 }}>Detected race to {detectedRace}.</p> : null}
+                {detectedHome || detectedAway ? (
+                  <p style={{ fontSize: 12 }}>Detected teams: <strong>{detectedHome ?? "?"}</strong> vs <strong>{detectedAway ?? "?"}</strong> — applied on approve.</p>
+                ) : null}
                 {modelUsed ? <p style={{ fontSize: 11, opacity: 0.7 }}>Read by {modelUsed}.</p> : null}
                 {rawNotes ? (
                   <div style={{ fontSize: 12, marginTop: 8, padding: 8, borderRadius: 8, background: "#0b0f0d", border: "1px solid #38413d" }}>

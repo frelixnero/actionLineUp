@@ -246,7 +246,7 @@ export default function Home() {
   // Apply a reviewed scan to the board. New names merge into rosters (8 cap);
   // reviewed rows map onto matchup ids by name pairs, so anything the board
   // cannot place stays manual instead of silently attaching to the wrong game.
-  const applyScan = (payload: { games: { gameNumber: number; home: string; visitor: string; winner: "home" | "visitor" | "unplayed" | "unknown" }[]; raceTarget: number | null }) => {
+  const applyScan = (payload: { games: { gameNumber: number; home: string; visitor: string; winner: "home" | "visitor" | "unplayed" | "unknown" }[]; raceTarget: number | null; homeTeam: string | null; awayTeam: string | null }) => {
     const norm = (s: string) => s.trim().toLowerCase();
     const merge = (list: Player[], names: string[]) => {
       const seen = new Set(list.map(p => norm(p.name)));
@@ -275,15 +275,22 @@ export default function Home() {
     setHome(newHome);
     setAway(newAway);
     setWinners(v => ({ ...v, ...mapped }));
+    // Scanned sheet names replace the board's teams so the card reads
+    // "The Outsiders vs Sharp Shooters", not last week's matchup.
+    const nextHome = payload.homeTeam?.trim() || homeTeam;
+    const nextAway = payload.awayTeam?.trim() || awayTeam;
+    setHomeTeam(nextHome);
+    setAwayTeam(nextAway);
     if (payload.raceTarget && payload.raceTarget > 0) {
       setScoring(v => ({ ...v, matchWinAt: payload.raceTarget as number }));
     }
     const applied = Object.keys(mapped).length;
     const skippedNote = skipped.length > 0 ? ` · ${skipped.length} skipped (unplayed)` : "";
+    const teamsNote = (nextHome !== homeTeam || nextAway !== awayTeam) ? ` · teams set to ${nextHome} vs ${nextAway}` : "";
     if (unmatched.length > 0) {
-      toast.info(`${applied} game${applied === 1 ? "" : "s"} applied${skippedNote} · ${unmatched.length} need manual scoring (games ${unmatched.slice(0, 6).join(", ")}).`);
+      toast.info(`${applied} game${applied === 1 ? "" : "s"} applied${skippedNote}${teamsNote} · ${unmatched.length} need manual scoring (games ${unmatched.slice(0, 6).join(", ")}).`);
     } else {
-      toast.success(`${applied} scanned games applied to the scorecard${skippedNote}.`);
+      toast.success(`${applied} scanned games applied to the scorecard${skippedNote}${teamsNote}.`);
     }
   };
 
