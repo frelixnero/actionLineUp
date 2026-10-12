@@ -1,6 +1,0 @@
-{
-  "name": "Pool Scorecard OCR & League Studio",
-  "description": "AI-powered pool and BCA league scorecard OCR reader, diagnostics, and manual scoring fallback.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

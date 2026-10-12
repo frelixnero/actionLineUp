@@ -7,6 +7,7 @@ dist/
 .env
 .env.*
 !.env.example
+pool-scorecard-ocr-&-league-studio/
 
 
 Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy RemoteSigned
