@@ -48,6 +48,9 @@ export async function POST(request: Request) {
           const sub = await stripeClient().subscriptions.retrieve(
             typeof session.subscription === "string" ? session.subscription : session.subscription.id);
           await applySubscription(db, sub, session.client_reference_id ?? null);
+        } else {
+          // One-time payments: dues and donations carry a typed metadata tag.
+          await applyOneTimePayment(db, session);
         }
         break;
       }
@@ -70,6 +73,40 @@ export async function POST(request: Request) {
 }
 
 type Db = ReturnType<typeof adminSupabase>;
+
+/**
+ * One-time payments. Dues flip the player's status to paid on the exact
+ * lineup (matched by id + normalized name, league-scoped); donations append
+ * one ledger row. Unknown/absent metadata is ignored, never guessed.
+ */
+async function applyOneTimePayment(db: Db, session: Stripe.Checkout.Session) {
+  if (session.payment_status !== "paid") return;
+  const meta = (session.metadata ?? {}) as Record<string, string | undefined>;
+  if (meta.league_key !== LEAGUE_KEY) return;
+
+  if (meta.type === "dues" && meta.lineup_id && meta.player_name) {
+    const target = meta.player_name.trim().toLowerCase();
+    const { data: rows } = await db
+      .from("lineup_players")
+      .select("id, name")
+      .eq("lineup_id", meta.lineup_id);
+    const hit = (rows ?? []).find((r) => String(r.name ?? "").trim().toLowerCase() === target);
+    if (!hit) return;
+    await db.from("lineup_players").update({ payment: "paid" }).eq("id", hit.id);
+    return;
+  }
+
+  if (meta.type === "donation") {
+    const amountCents = session.amount_total ?? 0;
+    if (!Number.isFinite(amountCents) || amountCents <= 0) return;
+    await db.from("donations").insert({
+      league_key: LEAGUE_KEY,
+      amount_cents: amountCents,
+      donor_profile_id: session.client_reference_id || null,
+      stripe_session_id: session.id,
+    });
+  }
+}
 
 async function applySubscription(db: Db, sub: Stripe.Subscription, fallbackProfileId: string | null) {
   const profileId = (sub.metadata?.profile_id as string | undefined) ?? fallbackProfileId;

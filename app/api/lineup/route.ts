@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminSupabase } from "@/lib/supabase";
 import { LEAGUE_KEY, canEditLineup, captainTeams } from "@/lib/league";
+import { rostersEqual } from "@/lib/permissions";
 
 type Side = "home" | "away";
 type Payment = "paid" | "due" | "pending";
@@ -74,6 +75,44 @@ export async function GET() {
   }
 }
 
+/** Most recent stored roster for a team name (either side), or null if new. */
+async function latestRosterForTeam(
+  db: ReturnType<typeof adminSupabase>,
+  teamName: string,
+): Promise<PlayerRow[] | null> {
+  const { data: recent } = await db
+    .from("lineups")
+    .select("id, home_team, away_team")
+    .eq("league_key", LEAGUE_KEY)
+    .order("updated_at", { ascending: false })
+    .limit(10);
+  const hit = (recent ?? []).find(
+    (l) =>
+      String(l.home_team ?? "").trim().toLowerCase() === teamName ||
+      String(l.away_team ?? "").trim().toLowerCase() === teamName,
+  );
+  if (!hit) return null;
+  // The team may have played the opposite side last time; compare against
+  // whichever side it was actually on.
+  const hitSide: Side =
+    String(hit.home_team ?? "").trim().toLowerCase() === teamName ? "home" : "away";
+  const { data: players } = await db
+    .from("lineup_players")
+    .select("side, position, name, role, payment, active")
+    .eq("lineup_id", hit.id)
+    .order("position");
+  return (players ?? [])
+    .filter((p) => p.side === hitSide)
+    .map((p) => ({
+      side: hitSide,
+      position: p.position,
+      name: p.name ?? "",
+      role: p.role ?? "Player",
+      payment: (p.payment ?? "due") as PlayerRow["payment"],
+      active: p.active !== false,
+    }));
+}
+
 /** Publish the lineup so both teams see the same thing. Owner or a captain of either team. */
 export async function PUT(request: Request) {
   let body: Record<string, unknown>;
@@ -88,6 +127,31 @@ export async function PUT(request: Request) {
 
   const permission = await canEditLineup(homeTeam, awayTeam);
   if (!permission.ok) return NextResponse.json({ error: permission.error }, { status: permission.status });
+
+  // Per-side enforcement: a captain may change only their OWN side's roster
+  // and payments. Game winners stay recordable by either side's captain
+  // (live scoring happens from whichever phone is handy), but names, roles,
+  // payment flags, and active status on the other side are immutable to them.
+  // Owners skip this entirely. A team with no prior lineup is bootstrapping
+  // (new or scanned-in team) and both sides are writable on first publish.
+  if (permission.user.role !== "owner") {
+    const myTeams = (await captainTeams(permission.user)).map(t => t.trim().toLowerCase());
+    const db = adminSupabase();
+    for (const side of ["home", "away"] as const) {
+      const teamName = (side === "home" ? homeTeam : awayTeam).trim().toLowerCase();
+      if (!teamName || myTeams.includes(teamName)) continue;
+      const stored = await latestRosterForTeam(db, teamName);
+      if (stored === null) continue; // No history: first publish for this team.
+      const incoming = side === "home" ? parseRoster(body?.home, "home") : parseRoster(body?.away, "away");
+      if (!rostersEqual(stored, incoming)) {
+        const label = side === "home" ? homeTeam : awayTeam;
+        return NextResponse.json(
+          { error: `Only the captain of ${label} or the league owner can change that team's roster or payments.` },
+          { status: 403 },
+        );
+      }
+    }
+  }
 
   try {
     const db = adminSupabase();

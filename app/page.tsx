@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import TournamentDesk from "./tournament";
 import ScorecardScanModal from "@/components/ScorecardScanModal";
 import { mapScannedToWinners } from "@/lib/scorecard-validate";
+import { canEditSide as sideEditable } from "@/lib/permissions";
 
 type Payment = "paid" | "due" | "pending";
 type Player = { name: string; position: string; payment: Payment; active?: boolean };
@@ -65,9 +66,11 @@ const weekResults: (readonly [string, number, string, number])[] = [
 ];
 
 const playerAliases:Record<string,string>={};
-const pctForPlayer=(name:string)=>{const key=name.trim().toLowerCase();const canonical=playerAliases[key]||name;const player=statPlayers.find(p=>p.name.toLowerCase()===canonical.toLowerCase());return player?player.w/(player.w+player.l):.5;};
-const pctForTeam=(name:string)=>{const team=leagueTeams.find(t=>t.name.toLowerCase()===name.trim().toLowerCase());return team?team.w/(team.w+team.l):.5;};
-const matchupForecast=(a:string,b:string,aTeam:string,bTeam:string)=>{const aRating=pctForPlayer(a)*.8+pctForTeam(aTeam)*.2;const bRating=pctForPlayer(b)*.8+pctForTeam(bTeam)*.2;return Math.round(aRating/(aRating+bRating)*100);};
+// Live-data forecast inputs: pass the current standings teams and aggregated
+// player records. Unknown names fall back to .5 so new players start neutral.
+const pctForPlayer=(players:StatPlayer[],name:string)=>{const key=name.trim().toLowerCase();const canonical=playerAliases[key]||name;const player=players.find(p=>p.name.toLowerCase()===canonical.toLowerCase());return player?(player.w/(player.w+player.l)||.5):.5;};
+const pctForTeam=(teams:{name:string;w:number;l:number}[],name:string)=>{const team=teams.find(t=>t.name.toLowerCase()===name.trim().toLowerCase());return team?(team.w/(team.w+team.l)||.5):.5;};
+const matchupForecast=(players:StatPlayer[],teams:{name:string;w:number;l:number}[],a:string,b:string,aTeam:string,bTeam:string)=>{const aRating=pctForPlayer(players,a)*.8+pctForTeam(teams,aTeam)*.2;const bRating=pctForPlayer(players,b)*.8+pctForTeam(teams,bTeam)*.2;return Math.round(aRating/(aRating+bRating)*100);};
 
 export default function Home() {
   const [homeTeam, setHomeTeam] = useState("Seguin Cue Club");
@@ -76,7 +79,20 @@ export default function Home() {
   const [away, setAway] = useState<Player[]>(initialAway);
   const [round, setRound] = useState(0);
   const [winners, setWinners] = useState<Record<string, Winner>>({ "0-0": "home", "0-1": "away", "0-2": "home" });
-  const [raised, setRaised] = useState(425);
+  const [raisedCents, setRaisedCents] = useState<number | null>(null);
+  const [donorCount, setDonorCount] = useState(0);
+  const [donateOpen, setDonateOpen] = useState(true);
+  const [donateBusy, setDonateBusy] = useState(false);
+  const donate = async (amountCents: number) => {
+    setDonateBusy(true);
+    try {
+      const res = await fetch("/api/payments/donate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amountCents }) });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d?.error ?? "Could not start checkout."); return; }
+      window.location.assign(d.url);
+    } catch { toast.error("Could not reach payments."); }
+    finally { setDonateBusy(false); }
+  };
   const [matchInfo,setMatchInfo]=useState({date:"2026-09-22",time:"7:30 PM",venue:"The Silver Cue Tavern, Seguin"});
   const [leagueName,setLeagueName]=useState("Seguin 8Ball League");
   const [playerFee,setPlayerFee]=useState(10);
@@ -122,15 +138,16 @@ export default function Home() {
   const awayWins = Object.values(winners).filter(v => v === "away").length;
   const unpaid = [...activeHome, ...activeAway].filter(p => p.payment !== "paid").length;
   const updateName = (team: "home"|"away", index: number, name: string) => {
+    if (!needSide(team)) return;
     const setter = team === "home" ? setHome : setAway;
     setter(list => list.map((p,i) => i === index ? {...p,name} : p));
   };
-  const updatePosition=(team:"home"|"away",index:number,position:string)=>{const setter=team==="home"?setHome:setAway;setter(list=>list.map((p,i)=>i===index?{...p,position}:p));};
-  const togglePlayer=(team:"home"|"away",index:number)=>{const setter=team==="home"?setHome:setAway;setter(list=>list.map((p,i)=>i===index?{...p,active:!p.active}:p));};
+  const updatePosition=(team:"home"|"away",index:number,position:string)=>{if(!needSide(team))return;const setter=team==="home"?setHome:setAway;setter(list=>list.map((p,i)=>i===index?{...p,position}:p));};
+  const togglePlayer=(team:"home"|"away",index:number)=>{if(!needSide(team))return;const setter=team==="home"?setHome:setAway;setter(list=>list.map((p,i)=>i===index?{...p,active:!p.active}:p));};
   // True delete (only offered on benched rows): removal re-indexes matchups,
   // and game ids are index-based, so recorded winners would attach to the
   // wrong pairings — clear scores with an explanatory toast.
-  const removePlayer=(team:"home"|"away",index:number)=>{const setter=team==="home"?setHome:setAway;setter(list=>list.filter((_,i)=>i!==index));setWinners({});toast.success("Player removed. Scores cleared since matchups changed.");};
+  const removePlayer=(team:"home"|"away",index:number)=>{if(!needSide(team))return;const setter=team==="home"?setHome:setAway;setter(list=>list.filter((_,i)=>i!==index));setWinners({});toast.success("Player removed. Scores cleared since matchups changed.");};
   // Dialog-driven add player flow: open dialog to collect name/position, then append
   const [playerDialogOpen, setPlayerDialogOpen] = useState(false);
   const [playerDialogTeam, setPlayerDialogTeam] = useState<"home"|"away">("home");
@@ -150,18 +167,57 @@ export default function Home() {
     });
   };
 
-  const showAddPlayerDialog=(team:"home"|"away")=>{ setPlayerDialogTeam(team); setPlayerDraft({name:"",position:"Player",payment:"due",active:true}); setPlayerDialogOpen(true); };
-  const confirmAddPlayer=()=>{ addPlayerToList(playerDialogTeam, playerDraft); setPlayerDialogOpen(false); toast.success("Player added to roster."); };
-  const movePlayer=(team:"home"|"away",from:number,to:number)=>{const setter=team==="home"?setHome:setAway;setter(list=>{if(to<0||to>=list.length||from===to)return list;const next=[...list];const [moved]=next.splice(from,1);next.splice(to,0,moved);return next;});};
+  const showAddPlayerDialog=(team:"home"|"away")=>{ if(!needSide(team))return; setPlayerDialogTeam(team); setPlayerDraft({name:"",position:"Player",payment:"due",active:true}); setPlayerDialogOpen(true); };
+  const confirmAddPlayer=()=>{ if(!needSide(playerDialogTeam))return; addPlayerToList(playerDialogTeam, playerDraft); setPlayerDialogOpen(false); toast.success("Player added to roster."); };
+  const movePlayer=(team:"home"|"away",from:number,to:number)=>{if(!needSide(team))return;const setter=team==="home"?setHome:setAway;setter(list=>{if(to<0||to>=list.length||from===to)return list;const next=[...list];const [moved]=next.splice(from,1);next.splice(to,0,moved);return next;});};
   const cyclePay = (team: "home"|"away", index: number) => {
+    if (!needSide(team)) return;
     const setter = team === "home" ? setHome : setAway;
     setter(list => list.map((p,i) => i !== index ? p : {...p, payment: p.payment === "due" ? "pending" : p.payment === "pending" ? "paid" : "due"}));
   };
+  const tapWinner = (id: string, side: "home"|"away") => {
+    if (!canEditAny) { toast.error("Only a team captain or the league owner can score games."); return; }
+    setWinners(v => ({ ...v, [id]: side }));
+  };
+  const clearScores = () => {
+    if (!canEditAny) { toast.error("Only a team captain or the league owner can clear scores."); return; }
+    setWinners({}); setRound(0); toast.success("Scores cleared. Rosters saved.");
+  };
+  // Stripe dues collection for one player. Checkout happens on Stripe; the
+  // webhook flips the status to paid, so tapping can never fake a payment.
+  const collectDues = async (team:"home"|"away", index:number) => {
+    if (!needSide(team)) return;
+    if (!lineupId) { toast.error("Publish the lineup first, then collect dues against it."); return; }
+    const name = (team === "home" ? home : away)[index]?.name.trim();
+    if (!name) { toast.error("Name the player first."); return; }
+    try {
+      const res = await fetch("/api/payments/dues", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lineupId, playerName: name, amountCents: Math.round(playerFee * 100) }) });
+      const d = await res.json();
+      if (!res.ok) { toast.error(d?.error ?? "Could not start checkout."); return; }
+      window.location.assign(d.url);
+    } catch { toast.error("Could not reach payments."); }
+  };
 
   const [lineupId,setLineupId]=useState<string|null>(null);
-  const [signedIn,setSignedIn]=useState(false);
-  const [currentUser,setCurrentUser]=useState<{id:string;username:string;role:"owner"|"player";email:string|null}|null>(null);
+  const [currentUser,setCurrentUser]=useState<{id:string;username:string;role:"owner"|"player";email:string|null;captainTeams?:string[]}|null>(null);
   const [syncBusy,setSyncBusy]=useState(false);
+  // RBAC: owners edit everything; captains edit their own side; everyone
+  // else views. The server re-checks per request — this only gates the UI
+  // so players are never offered controls that would fail on publish.
+  const myTeams = currentUser?.role === "owner" ? [] : (currentUser?.captainTeams ?? []);
+  const editableHome = sideEditable(currentUser?.role ?? null, myTeams, homeTeam);
+  const editableAway = sideEditable(currentUser?.role ?? null, myTeams, awayTeam);
+  const canEditAny = editableHome || editableAway;
+  const needSide = (team: "home"|"away") => {
+    const ok = team === "home" ? editableHome : editableAway;
+    if (!ok) toast.error("Only that team's captain or the league owner can change this.");
+    return ok;
+  };
+  // Live league data (replaces the hardcoded tables below on load).
+  const [livePlayers,setLivePlayers]=useState<StatPlayer[]>(statPlayers);
+  const [standingsTeams,setStandingsTeams]=useState<LeagueTeam[]>(leagueTeams);
+  const [results,setResults]=useState<(readonly [string,number,string,number])[]>(weekResults);
+  const [history,setHistory]=useState<{id:string;homeTeam:string;awayTeam:string;matchDate:string|null;homeWins:number;awayWins:number;home:string[];away:string[]}[]>([]);
   const applyLineup=(l:{id:string;homeTeam:string;awayTeam:string;home:Player[];away:Player[];matchInfo:{date:string;time:string;venue:string};scoring:typeof scoring;scoreSubmission?:ScoreSubmission;winners:Record<string,Winner>})=>{
     setLineupId(l.id); setHomeTeam(l.homeTeam??""); setAwayTeam(l.awayTeam??"");
     setHome(l.home??[]); setAway(l.away??[]); setWinners(l.winners??{});
@@ -172,11 +228,32 @@ export default function Home() {
   useEffect(()=>{let off=false;(async()=>{
     const me=await fetch("/api/auth/me").then(r=>r.ok?r.json():null).catch(()=>null);
     if(!off) {
-      setSignedIn(Boolean(me?.user));
       setCurrentUser(me?.user ?? null);
     }
     try{const d=await fetch("/api/lineup").then(r=>r.json());if(!off&&d?.lineup) applyLineup(d.lineup);}catch{}
     try{const is=await fetch("/api/issues").then(r=>r.ok?r.json():null);if(!off&&is?.issues?.length) setIssues(is.issues);}catch{}
+    // Live league data: lineup history (dropdown, team list, last rosters),
+    // aggregated player records (forecast, leaderboards), standings teams.
+    try{
+      const h=await fetch("/api/lineups?limit=50").then(r=>r.ok?r.json():null).catch(()=>null);
+      if(!off&&Array.isArray(h?.lineups)&&h.lineups.length>0){
+        setHistory(h.lineups);
+        setResults(h.lineups.map((l:{homeTeam:string;homeWins:number;awayTeam:string;awayWins:number})=>
+          [l.homeTeam,l.homeWins,l.awayTeam,l.awayWins] as const));
+      }
+    }catch{}
+    try{
+      const ps=await fetch("/api/player-stats").then(r=>r.ok?r.json():null).catch(()=>null);
+      if(!off&&Array.isArray(ps?.players)&&ps.players.length>0) setLivePlayers(ps.players);
+    }catch{}
+    try{
+      const st=await fetch("/api/standings").then(r=>r.ok?r.json():null).catch(()=>null);
+      if(!off&&Array.isArray(st?.teams)&&st.teams.length>0) setStandingsTeams(st.teams);
+    }catch{}
+    try{
+      const dn=await fetch("/api/payments/donate").then(r=>r.ok?r.json():null).catch(()=>null);
+      if(!off&&dn&&typeof dn.raisedCents==="number"){ setRaisedCents(dn.raisedCents); setDonorCount(dn.count ?? 0); setDonateOpen(dn.configured !== false); }
+    }catch{}
   })();return()=>{off=true;};},[]);
   const [signingOut, setSigningOut] = useState(false);
   const signOut=async()=>{
@@ -184,7 +261,6 @@ export default function Home() {
     try{
       await fetch("/api/auth/sign-out",{method:"POST"});
     }catch{}
-    setSignedIn(false);
     setCurrentUser(null);
     setPortal("landing");
     setSigningOut(false);
@@ -231,6 +307,74 @@ export default function Home() {
     try {
       await fetch(`/api/issues?id=${encodeURIComponent(id)}`, { method: "PATCH" });
     } catch {}
+  };
+
+  // Team identity drives rosters. Known teams (from published lineups or
+  // standings) load their last roster on selection; a brand-new name asks
+  // whether to keep the current roster or start from a blank slate.
+  const [teamDialog,setTeamDialog]=useState<{side:"home"|"away";name:string}|null>(null);
+  const knownTeamNames = useMemo(()=>{
+    const names = new Set<string>();
+    for (const h of history) { if(h.homeTeam.trim())names.add(h.homeTeam.trim().toLowerCase()); if(h.awayTeam.trim())names.add(h.awayTeam.trim().toLowerCase()); }
+    for (const t of standingsTeams) { if(t.name.trim())names.add(t.name.trim().toLowerCase()); }
+    return names;
+  },[history,standingsTeams]);
+  const lastRosterFor = (teamName:string): Player[] | null => {
+    const key = teamName.trim().toLowerCase();
+    for (const h of history) {
+      if (h.homeTeam.trim().toLowerCase() === key && h.home.length > 0) {
+        return h.home.map(name => ({ name, position: "Player", payment: "due" as Payment, active: true }));
+      }
+      if (h.awayTeam.trim().toLowerCase() === key && h.away.length > 0) {
+        return h.away.map(name => ({ name, position: "Player", payment: "due" as Payment, active: true }));
+      }
+    }
+    return null;
+  };
+  const applyTeamSide = (side:"home"|"away", name:string, roster:Player[]|null) => {
+    const setTeam = side === "home" ? setHomeTeam : setAwayTeam;
+    const setRoster = side === "home" ? setHome : setAway;
+    setTeam(name);
+    if (roster) {
+      setRoster(roster);
+      setWinners({});
+      setRound(0);
+      toast.success(`${name}'s last roster loaded. Scores cleared for the new matchup.`);
+    }
+  };
+  const requestTeamChange = (side:"home"|"away", name:string) => {
+    const clean = name.trim();
+    const current = side === "home" ? homeTeam : awayTeam;
+    if (!clean || clean.toLowerCase() === current.trim().toLowerCase()) {
+      (side === "home" ? setHomeTeam : setAwayTeam)(name);
+      return;
+    }
+    if (!sideEditable(currentUser?.role ?? null, myTeams, current) && !sideEditable(currentUser?.role ?? null, myTeams, clean)) {
+      // Not a captain of either side: let them type, but nothing structural changes.
+      (side === "home" ? setHomeTeam : setAwayTeam)(name);
+      return;
+    }
+    if (knownTeamNames.has(clean.toLowerCase())) {
+      const last = lastRosterFor(clean);
+      applyTeamSide(side, clean, last);
+      if (!last) toast.info(`${clean} selected. No saved roster found — current roster kept.`);
+      return;
+    }
+    setTeamDialog({ side, name: clean });
+  };
+  const resolveTeamDialog = (blank:boolean) => {
+    if (!teamDialog) return;
+    const { side, name } = teamDialog;
+    (side === "home" ? setHomeTeam : setAwayTeam)(name);
+    if (blank) {
+      (side === "home" ? setHome : setAway)([]);
+      setWinners({});
+      setRound(0);
+      toast.success(`New team "${name}" — starting with a blank roster.`);
+    } else {
+      toast.success(`New team "${name}" — current roster kept.`);
+    }
+    setTeamDialog(null);
   };
 
   const loadDemoMatch = () => {
@@ -301,7 +445,7 @@ export default function Home() {
         <LandingPage
           onLeague={(name)=>{setLeagueName(name);setPortal("league");}}
           onOwner={()=>setPortal("owner")}
-          onAuthSuccess={(u)=>{setSignedIn(true);setCurrentUser({id:u.id,username:u.username,role:u.role,email:null});}}
+          onAuthSuccess={(u)=>{setCurrentUser({id:u.id,username:u.username,role:u.role,email:null});fetch("/api/auth/me").then(r=>r.ok?r.json():null).then(me=>{if(me?.user)setCurrentUser(me.user);}).catch(()=>{});}}
         />
       )}
       {portal === "owner" && (
@@ -421,7 +565,7 @@ export default function Home() {
     </div>
 
     <datalist id="league-teams-datalist">
-      {leagueTeams.map(t => <option key={t.name} value={t.name} />)}
+      {[...new Set([...history.flatMap(h=>[h.homeTeam,h.awayTeam]),...standingsTeams.map(t=>t.name),...leagueTeams.map(t=>t.name)])].filter(Boolean).map(name => <option key={name} value={name} />)}
     </datalist>
 
     <section className="score-hero">
@@ -429,10 +573,13 @@ export default function Home() {
         <input
           aria-label="Home team"
           list="league-teams-datalist"
-          title="Click to select or edit Home Team"
+          title={canEditAny ? "Click to select or edit Home Team" : "Sign in as a captain or owner to change teams"}
           placeholder="Home team"
           value={homeTeam}
           onChange={e=>setHomeTeam(e.target.value)}
+          onBlur={e=>requestTeamChange("home", e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+          disabled={!canEditAny}
         />
         <span>HOME TEAM · CLICK TO EDIT</span>
       </div>
@@ -441,22 +588,23 @@ export default function Home() {
         <p>{Object.keys(winners).length} of {scoring.gamesPerMatch} games complete</p>
         <div className="matchup-switch-row">
           <select
-            value={weekResults.some(r => (r[0] === homeTeam && r[2] === awayTeam) || (r[0] === awayTeam && r[2] === homeTeam)) ? `${homeTeam} vs ${awayTeam}` : "custom"}
+            aria-label="Select matchup"
+            value={results.some(r => (r[0] === homeTeam && r[2] === awayTeam) || (r[0] === awayTeam && r[2] === homeTeam)) ? `${homeTeam} vs ${awayTeam}` : "custom"}
+            disabled={!canEditAny}
             onChange={(e) => {
               const val = e.target.value;
               if (val === "custom") return;
               const [h, a] = val.split(" vs ");
               if (h && a) {
-                setHomeTeam(h);
-                setAwayTeam(a);
+                requestTeamChange("home", h);
+                requestTeamChange("away", a);
                 toast.info(`Switched matchup to ${h} vs ${a}`);
               }
             }}
           >
-            <option value="Seguin Cue Club vs Guadalupe Break">Seguin Cue Club vs Guadalupe Break</option>
-            <option value="8-Ball Assassins vs Corner Pocket Crew">8-Ball Assassins vs Corner Pocket Crew</option>
-            <option value="Rack 'Em Rollers vs Diamond Cutters">Rack 'Em Rollers vs Diamond Cutters</option>
-            <option value="Billiards & Brews vs Rail Masters">Billiards & Brews vs Rail Masters</option>
+            {results.map(([h,,a])=>(
+              <option key={`${h} vs ${a}`} value={`${h} vs ${a}`}>{h} vs {a}</option>
+            ))}
             <option value="custom">Custom matchup...</option>
           </select>
         </div>
@@ -465,10 +613,13 @@ export default function Home() {
         <input
           aria-label="Visitors"
           list="league-teams-datalist"
-          title="Click to select or edit Visitors team"
+          title={canEditAny ? "Click to select or edit Visitors team" : "Sign in as a captain or owner to change teams"}
           placeholder="Visitors team"
           value={awayTeam}
           onChange={e=>setAwayTeam(e.target.value)}
+          onBlur={e=>requestTeamChange("away", e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+          disabled={!canEditAny}
         />
         <span>VISITORS · CLICK TO EDIT</span>
       </div>
@@ -495,7 +646,7 @@ export default function Home() {
             <button className="quiet-button" disabled={syncBusy} onClick={pullLineup}>
               <RefreshCw className={syncBusy ? "animate-spin" : ""} size={14}/> {syncBusy ? "Pulling..." : "Pull"}
             </button>
-            {signedIn&&<button className="quiet-button" disabled={syncBusy} onClick={()=>publishLineup()}>
+            {canEditAny&&<button className="quiet-button" disabled={syncBusy} onClick={()=>publishLineup()}>
               {syncBusy ? <Loader2 className="animate-spin" size={14}/> : <Cloud size={14}/>} {syncBusy ? "Publishing..." : "Publish lineup"}
             </button>}
           </div>
@@ -506,19 +657,20 @@ export default function Home() {
             awayNames={away.map(p => p.name)}
             lineupId={lineupId}
             raceTarget={scoring.matchWinAt}
+            disabled={!canEditAny}
             onApply={applyScan}
           />
         </div>
         <section className="match-location-bar"><label><MapPin/><span>PLAYING AT</span><input value={matchInfo.venue} onChange={e=>setMatchInfo(v=>({...v,venue:e.target.value}))}/></label><label><CalendarDays/><span>DATE</span><input type="date" value={matchInfo.date} onChange={e=>setMatchInfo(v=>({...v,date:e.target.value}))}/></label><label><Clock/><span>TIME</span><input value={matchInfo.time} onChange={e=>setMatchInfo(v=>({...v,time:e.target.value}))}/></label></section>
-        {(()=>{const chance=Math.round(pctForTeam(homeTeam)/(pctForTeam(homeTeam)+pctForTeam(awayTeam))*100);return <section className="team-forecast"><div><p className="eyebrow"><Sparkles/> MATCH FORECAST</p><h3>{homeTeam} <b>{chance}%</b></h3></div><div className="forecast-track"><i style={{width:`${chance}%`}}/><span/></div><div><h3><b>{100-chance}%</b> {awayTeam}</h3><small>Estimated from current team records · not betting odds</small></div></section>})()}
+        {(()=>{const chance=Math.round(pctForTeam(standingsTeams,homeTeam)/(pctForTeam(standingsTeams,homeTeam)+pctForTeam(standingsTeams,awayTeam))*100);return <section className="team-forecast"><div><p className="eyebrow"><Sparkles/> MATCH FORECAST</p><h3>{homeTeam} <b>{chance}%</b></h3></div><div className="forecast-track"><i style={{width:`${chance}%`}}/><span/></div><div><h3><b>{100-chance}%</b> {awayTeam}</h3><small>Estimated from current team records · not betting odds</small></div></section>})()}
         <div className="roster-grid">
-          <Roster title={homeTeam} players={home} team="home" onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onRemove={removePlayer} onAdd={()=>showAddPlayerDialog("home")} onMove={movePlayer}/>
-          <Roster title={awayTeam} players={away} team="away" onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onRemove={removePlayer} onAdd={()=>showAddPlayerDialog("away")} onMove={movePlayer}/>
+          <Roster title={homeTeam} players={home} team="home" editable={editableHome} onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onRemove={removePlayer} onAdd={()=>showAddPlayerDialog("home")} onMove={movePlayer}/>
+          <Roster title={awayTeam} players={away} team="away" editable={editableAway} onName={updateName} onPosition={updatePosition} onPay={cyclePay} onToggle={togglePlayer} onRemove={removePlayer} onAdd={()=>showAddPlayerDialog("away")} onMove={movePlayer}/>
         </div>
         <section className="round-section">
           <div className="round-head"><div><p className="eyebrow">MATCHUPS GENERATED</p><h3>Round {round+1}</h3></div>
             <div className="round-picker">{rotation.map((_: number[], i: number)=><button key={i} className={round===i?"active":""} onClick={()=>setRound(i)}>{i+1}</button>)}</div></div>
-          <div className="matchup-list">{(matchups[round]??[]).map((m: { id: string; home: Player; away: Player }, i: number)=>{const chance=matchupForecast(m.home.name,m.away.name,homeTeam,awayTeam);return <div className="matchup-row" key={m.id}>
+          <div className="matchup-list">{(matchups[round]??[]).map((m: { id: string; home: Player; away: Player }, i: number)=>{const chance=matchupForecast(livePlayers,standingsTeams,m.home.name,m.away.name,homeTeam,awayTeam);return <div className="matchup-row" key={m.id}>
             <span className="table-number">{i+1}</span><strong>{m.home.name||`Home ${i+1}`}<small>{chance}% estimate</small></strong><span className="versus">VS</span><strong>{m.away.name||`Visitor ${i+1}`}<small>{100-chance}% estimate</small></strong><span className="match-odds"><b>{chance}</b><i><span style={{width:`${chance}%`}}/></i><b>{100-chance}</b></span>
           </div>})}{(matchups[round]??[]).length===0&&<p className="leaderboard-empty">Add players to both rosters to generate matchups.</p>}</div>
           <p className="forecast-note"><ShieldCheck/> Forecasts blend player season percentage and team record. They are performance estimates, not gambling odds or guaranteed outcomes.</p>
@@ -527,11 +679,12 @@ export default function Home() {
 
       <TabsContent value="score" className="tab-panel">
         <div className="toolbar"><div><p className="eyebrow">TAP THE WINNER</p><h2>Live scorecard</h2></div>
-          <button className="quiet-button" onClick={()=>{setWinners({});setRound(0);toast.success("Scores cleared. Rosters saved.");}}><RotateCcw/> Clear scores</button></div>
+          <button className="quiet-button" disabled={!canEditAny} title={canEditAny?undefined:"Only a team captain or the league owner can clear scores."} onClick={clearScores}><RotateCcw/> Clear scores</button></div>
+        {!canEditAny&&<p className="leaderboard-empty">View only — sign in as a team captain or the owner to score.</p>}
         <div className="all-rounds">{matchups.map((games: { id: string; home: Player; away: Player }[], r: number)=><section className="score-round" key={r}><h3>Round {r+1}</h3>
           {games.map((g: { id: string; home: Player; away: Player })=><div className="score-game" key={g.id}>
-            <button className={winners[g.id]==="home"?"winner":""} onClick={()=>setWinners(v=>({...v,[g.id]:"home"}))}>{g.home.name}</button><span>vs</span>
-            <button className={winners[g.id]==="away"?"winner":""} onClick={()=>setWinners(v=>({...v,[g.id]:"away"}))}>{g.away.name}</button>
+            <button className={winners[g.id]==="home"?"winner":""} disabled={!canEditAny} onClick={()=>tapWinner(g.id,"home")}>{g.home.name}</button><span>vs</span>
+            <button className={winners[g.id]==="away"?"winner":""} disabled={!canEditAny} onClick={()=>tapWinner(g.id,"away")}>{g.away.name}</button>
           </div>)}</section>)}{matchups.length===0&&<p className="leaderboard-empty">Add players to both rosters to see the scorecard.</p>}</div>
         <ScoreSheetReview homeTeam={homeTeam} awayTeam={awayTeam} homeWins={homeWins} awayWins={awayWins} completeGames={Object.keys(winners).length} requiredGames={scoring.gamesPerMatch} submission={scoreSubmission} onChange={setScoreSubmission} onSyncConfirm={(next)=>publishLineup(next)}/>
       </TabsContent>
@@ -542,9 +695,9 @@ export default function Home() {
 
       <TabsContent value="payments" className="tab-panel">
         <div className="toolbar"><div><p className="eyebrow">MATCH FEES & DUES</p><h2>Payment board</h2></div><div className="due-summary"><CircleDollarSign/> {unpaid} need attention</div></div>
-        <div className="payment-note">Tap a status to move it from due → pending → paid. External payments require captain confirmation.</div>
-        <section className="money-ledger"><div><p className="eyebrow">LEAGUE MONEY OVERVIEW</p><h3>Public league ledger</h3><p>Show league totals without exposing individual balances.</p></div><div className="ledger-totals"><label><b>$<input aria-label="Player fee" type="number" min="0" value={playerFee} onChange={e=>setPlayerFee(Math.max(0,Number(e.target.value)||0))}/></b> player fee</label><span><b>$50</b> sponsor fee</span><span><b>8</b> roster spots</span><span><b>2</b> league contacts</span></div><small>Visible records: totals, deposits, expenses, and confirmations. Individual payment details stay captain-only.</small></section>
-        <div className="roster-grid"><Payments title={homeTeam} players={home} team="home" onPay={cyclePay} playerFee={playerFee}/><Payments title={awayTeam} players={away} team="away" onPay={cyclePay} playerFee={playerFee}/></div>
+        <div className="payment-note">Captains move their own side due → pending → paid, or collect via Stripe (webhook-confirmed). External payments require captain confirmation.</div>
+        <section className="money-ledger"><div><p className="eyebrow">LEAGUE MONEY OVERVIEW</p><h3>Public league ledger</h3><p>Show league totals without exposing individual balances.</p></div><div className="ledger-totals"><label><b>$<input aria-label="Player fee" type="number" min="0" value={playerFee} disabled={!canEditAny} onChange={e=>setPlayerFee(Math.max(0,Number(e.target.value)||0))}/></b> player fee</label><span><b>$50</b> sponsor fee</span><span><b>8</b> roster spots</span><span><b>2</b> league contacts</span></div><small>Visible records: totals, deposits, expenses, and confirmations. Individual payment details stay captain-only.</small></section>
+        <div className="roster-grid"><Payments title={homeTeam} players={home} team="home" editable={editableHome} onPay={cyclePay} onCollect={collectDues} playerFee={playerFee}/><Payments title={awayTeam} players={away} team="away" editable={editableAway} onPay={cyclePay} onCollect={collectDues} playerFee={playerFee}/></div>
         <section className="methods-card"><div><p className="eyebrow">PAYMENT LINKS</p><h3>Captain&apos;s payment options</h3></div>
           <div className="method-grid">{[["$ActionLineUp","Cash App"],["@ActionLineUp","Venmo"],["actionlineup","PayPal"],["Captain phone","Zelle"]].map(([h,m])=>
             <button key={m} onClick={()=>toast.info(`${m} link copied for the player.`)}><span>{m}</span><strong>{h}</strong><QrCode/></button>)}</div>
@@ -555,8 +708,8 @@ export default function Home() {
         <div className="toolbar"><div><p className="eyebrow">COMMUNITY SUPPORT</p><h2>Donations & fundraisers</h2></div></div>
         <section className="fundraiser-card"><div className="fund-icon"><HandHeart/></div><div className="fund-copy"><span>TEAM FUNDRAISER</span>
           <h3>Help our team reach the regional tournament</h3><p>Travel, entry fees and equipment support for the full team.</p>
-          <div className="progress-track"><i style={{width:`${Math.min(100,raised/10)}%`}}/></div><div className="fund-numbers"><strong>${raised.toLocaleString()} raised</strong><em>$1,000 goal</em></div>
-        </div><button className="donate-button" onClick={()=>{setRaised(v=>v+25);toast.success("$25 donation recorded. Thank you!");}}>Donate $25</button></section>
+          <div className="progress-track"><i style={{width:`${Math.min(100,(raisedCents ?? 0)/100000)}%`}}/></div><div className="fund-numbers"><strong>${((raisedCents ?? 0)/100).toLocaleString()} raised{donorCount>0?` · ${donorCount} gift${donorCount===1?"":"s"}`:""}</strong><em>$1,000 goal</em></div>
+        </div><div style={{display:"grid",gap:8}}>{donateOpen?([500,1000,2500,5000].map(cents=><button key={cents} className="donate-button" disabled={donateBusy} onClick={()=>donate(cents)}>Donate ${(cents/100).toFixed(0)}</button>)):<small>Online donations open soon — see a captain to give in person.</small>}</div></section>
         <div className="donation-rules"><ShieldCheck/><div><strong>Clear money records</strong><p>Donations stay separate from league dues and prize money. Only verified nonprofit campaigns should be marked tax-deductible.</p></div></div>
       </TabsContent>
 
@@ -564,6 +717,19 @@ export default function Home() {
       <TabsContent value="rules" className="tab-panel"><RuleDesk/></TabsContent>
       <TabsContent value="market" className="tab-panel"><PoolMarket/></TabsContent>
     </Tabs>
+    {/* New-team roster dialog */}
+    <Dialog open={teamDialog!==null} onOpenChange={(o)=>{if(!o)setTeamDialog(null);}}>
+      <DialogContent className="scan-dialog">
+        <DialogHeader>
+          <DialogTitle>New team &quot;{teamDialog?.name}&quot;</DialogTitle>
+          <DialogDescription>This team has no saved roster. Keep the current players or start blank?</DialogDescription>
+        </DialogHeader>
+        <div className="dialog-actions" style={{display:"flex",gap:10}}>
+          <button className="quiet-button" style={{flex:1}} onClick={()=>resolveTeamDialog(false)}>Keep current roster</button>
+          <button className="primary" style={{flex:1}} onClick={()=>resolveTeamDialog(true)}>Start blank roster</button>
+        </div>
+      </DialogContent>
+    </Dialog>
     {/* Player add dialog */}
     <Dialog open={playerDialogOpen} onOpenChange={setPlayerDialogOpen}>
       <DialogContent className="scan-dialog">
@@ -793,9 +959,30 @@ function LeagueHub({games,winners,scoring,setScoring,issues,onReport,currentUser
   const [issueType,setIssueType]=useState("Score correction");
   const [issueDetails,setIssueDetails]=useState("");
   const [teams, setTeams] = useState<LeagueTeamState[]>(leagueTeams);
+  const [livePlayers, setLivePlayers] = useState<StatPlayer[]>(statPlayers);
+  const [results, setResults] = useState<(readonly [string,number,string,number])[]>(weekResults);
   const [editingTeam, setEditingTeam] = useState<string|null>(null);
   const [savingStandings, setSavingStandings] = useState(false);
   const isOwner = currentUser?.role === "owner";
+
+  // Live league data; hardcoded tables above stay as the offline fallback.
+  useEffect(()=>{
+    let off=false;
+    (async()=>{
+      try{
+        const ps=await fetch("/api/player-stats").then(r=>r.ok?r.json():null).catch(()=>null);
+        if(!off&&Array.isArray(ps?.players)&&ps.players.length>0) setLivePlayers(ps.players);
+      }catch{}
+      try{
+        const h=await fetch("/api/lineups?limit=50").then(r=>r.ok?r.json():null).catch(()=>null);
+        if(!off&&Array.isArray(h?.lineups)&&h.lineups.length>0){
+          setResults(h.lineups.map((l:{homeTeam:string;homeWins:number;awayTeam:string;awayWins:number})=>
+            [l.homeTeam,l.homeWins,l.awayTeam,l.awayWins] as const));
+        }
+      }catch{}
+    })();
+    return()=>{off=true;};
+  },[]);
 
   // Load standings from the API on mount
   useEffect(()=>{
@@ -820,14 +1007,14 @@ function LeagueHub({games,winners,scoring,setScoring,issues,onReport,currentUser
     setTeams(prev => prev.map(t => t.name === name ? {...t, [field]: Math.max(0, parseInt(val)||0)} : t));
   };
 
-  const qualified=statPlayers.filter(p=>p.w+p.l>=20&&!p.dropped).sort((a,b)=>b.w/(b.w+b.l)-a.w/(a.w+a.l));
+  const qualified=livePlayers.filter(p=>p.w+p.l>=20&&!p.dropped).sort((a,b)=>b.w/(b.w+b.l)-a.w/(a.w+a.l));
   const power=(p:StatPlayer)=>Math.round((p.w/(p.w+p.l))*70+Math.min(20,(p.w+p.l)/3)+(p.eight||0)*3+(p.tr||0)*4);
   const ranked=[...qualified].sort((a,b)=>ranking==="wins"?b.w-a.w||a.l-b.l:ranking==="power"?power(b)-power(a):b.w/(b.w+b.l)-a.w/(a.w+a.l));
   const filtered=ranked.filter(p=>(p.name+p.team).toLowerCase().includes(query.toLowerCase()));
   const reportIssue=()=>{if(!issueDetails.trim()){toast.error("Tell the owner what needs attention.");return;}onReport({id:`issue-${Date.now()}`,type:issueType,details:issueDetails.trim(),createdAt:new Date().toISOString()});setIssueDetails("");toast.success("Your report was added to the owner review queue.");};
   return <div className="league-hq">
     <div className="league-banner">
-      <div><p className="eyebrow"><Sparkles/> ACTION INTELLIGENCE</p><h2>League Command Center</h2><p>{teams.length} teams &middot; {statPlayers.length} tracked players</p></div>
+      <div><p className="eyebrow"><Sparkles/> ACTION INTELLIGENCE</p><h2>League Command Center</h2><p>{teams.length} teams &middot; {livePlayers.length} tracked players</p></div>
       <div className="apex-badge"><Crown/><span>APEX MODE</span><strong>LIVE</strong></div>
     </div>
     <LeagueAnnouncements/>
@@ -882,8 +1069,8 @@ function LeagueHub({games,winners,scoring,setScoring,issues,onReport,currentUser
       </TabsContent>
 
       <TabsContent value="results">
-        <div className="results-layout"><section className="data-card weekly-results"><div className="data-title"><div><p className="eyebrow">COMPLETED</p><h3>Latest results</h3></div><span>{weekResults.length} reported</span></div>
-          {weekResults.length===0?<p className="leaderboard-empty">No results reported yet. Completed matches appear here.</p>:weekResults.map(([a,as,b,bs])=><div className="result-row" key={a}><strong className={as>bs?"won":""}>{a}</strong><b>{as}</b><span>FINAL</span><b>{bs}</b><strong className={bs>as?"won":""}>{b}</strong></div>)}</section>
+        <div className="results-layout"><section className="data-card weekly-results"><div className="data-title"><div><p className="eyebrow">COMPLETED</p><h3>Latest results</h3></div><span>{results.length} reported</span></div>
+          {results.length===0?<p className="leaderboard-empty">No results reported yet. Completed matches appear here.</p>:results.map(([a,as,b,bs])=><div className="result-row" key={a}><strong className={as>bs?"won":""}>{a}</strong><b>{as}</b><span>FINAL</span><b>{bs}</b><strong className={bs>as?"won":""}>{b}</strong></div>)}</section>
           <aside className="data-card week-leaders"><div className="data-title"><div><p className="eyebrow">THIS WEEK</p><h3>Performance pulse</h3></div></div><div><span>Biggest win</span><strong>&mdash;</strong></div><div><span>Closest match</span><strong>&mdash;</strong></div><div><span>Best defense</span><strong>&mdash;</strong></div><div><span>Reports complete</span><strong>0%</strong></div></aside></div>
       </TabsContent>
 
@@ -897,7 +1084,7 @@ function LeagueHub({games,winners,scoring,setScoring,issues,onReport,currentUser
         <section className="captain-report"><div><p className="eyebrow"><AlertTriangle/> CAPTAIN-ONLY SUPPORT</p><h3>Report a league problem</h3><p>Use this for a score correction, disputed shot, roster issue, or payment question. The owner sees it in the review queue.</p></div><div><select value={issueType} onChange={e=>setIssueType(e.target.value)}><option>Score correction</option><option>Disputed shot</option><option>Roster issue</option><option>Payment question</option></select><textarea value={issueDetails} onChange={e=>setIssueDetails(e.target.value)} placeholder="What happened? Include the teams and game number if you know them."/><button onClick={reportIssue}><Send/> Send to owner</button><small>{issues.filter(issue=>!issue.resolved).length} open report{issues.filter(issue=>!issue.resolved).length===1?"":"s"} in this league session</small></div></section>
       </TabsContent>
       <TabsContent value="scoring">
-        <section className="scoring-settings"><div><p className="eyebrow">LEAGUE ADMIN SETUP</p><h3>Set your league’s scoring system</h3><p>Each league can use its own format. These settings currently save on this device; admin accounts will control them once sign-in is connected.</p></div><div className="scoring-fields"><label>Score format<select value={scoring.format} onChange={e=>setScoring(v=>({...v,format:e.target.value}))}><option>Games won</option><option>Team points</option><option>Race to score</option></select></label><label>Games per match<input type="number" min="1" max="100" value={scoring.gamesPerMatch} onChange={e=>setScoring(v=>({...v,gamesPerMatch:Math.max(1,Number(e.target.value)||1)}))}/></label><label>Race-to target<input type="number" min="1" max="100" value={scoring.matchWinAt} onChange={e=>setScoring(v=>({...v,matchWinAt:Math.max(1,Number(e.target.value)||1)}))}/></label><label>Standings points for a win<input type="number" min="0" max="20" value={scoring.winPoints} onChange={e=>setScoring(v=>({...v,winPoints:Math.max(0,Number(e.target.value)||0)}))}/></label><label>Standings points for a loss<input type="number" min="0" max="20" value={scoring.lossPoints} onChange={e=>setScoring(v=>({...v,lossPoints:Math.max(0,Number(e.target.value)||0)}))}/></label></div><div className="scoring-preview"><strong>{scoring.format}</strong><span>{scoring.gamesPerMatch} games per match · race to {scoring.matchWinAt} · {scoring.winPoints} points for a win / {scoring.lossPoints} for a loss</span><button onClick={()=>toast.success("Scoring setup saved for this league.")}>Save scoring setup</button></div></section>
+        <section className="scoring-settings"><div><p className="eyebrow">LEAGUE ADMIN SETUP</p><h3>Set your league’s scoring system</h3><p>{isOwner?"Each league can use its own format. Changes apply on the next publish.":"Only the league owner can change the scoring system."}</p></div><div className="scoring-fields"><label>Score format<select disabled={!isOwner} value={scoring.format} onChange={e=>setScoring(v=>({...v,format:e.target.value}))}><option>Games won</option><option>Team points</option><option>Race to score</option></select></label><label>Games per match<input disabled={!isOwner} type="number" min="1" max="100" value={scoring.gamesPerMatch} onChange={e=>setScoring(v=>({...v,gamesPerMatch:Math.max(1,Number(e.target.value)||1)}))}/></label><label>Race-to target<input disabled={!isOwner} type="number" min="1" max="100" value={scoring.matchWinAt} onChange={e=>setScoring(v=>({...v,matchWinAt:Math.max(1,Number(e.target.value)||1)}))}/></label><label>Standings points for a win<input disabled={!isOwner} type="number" min="0" max="20" value={scoring.winPoints} onChange={e=>setScoring(v=>({...v,winPoints:Math.max(0,Number(e.target.value)||0)}))}/></label><label>Standings points for a loss<input disabled={!isOwner} type="number" min="0" max="20" value={scoring.lossPoints} onChange={e=>setScoring(v=>({...v,lossPoints:Math.max(0,Number(e.target.value)||0)}))}/></label></div><div className="scoring-preview"><strong>{scoring.format}</strong><span>{scoring.gamesPerMatch} games per match · race to {scoring.matchWinAt} · {scoring.winPoints} points for a win / {scoring.lossPoints} for a loss</span>{isOwner&&<button onClick={()=>toast.success("Scoring setup saved for this league.")}>Save scoring setup</button>}</div></section>
       </TabsContent>
     </Tabs><CallTheHit />
   </div>
@@ -973,30 +1160,32 @@ function RivalCard({tone,label,title,record,percent,percentLabel,empty}:{tone:st
   return <article className={`rival-card ${tone}`}><span>{label}</span><strong>{title||empty}</strong><small>{record||"Waiting for head-to-head results"}</small>{percent!==undefined&&<div className="rival-percentage"><b>{percent}%</b><em>{percentLabel}</em><span><i style={{width:`${percent}%`}}/></span></div>}</article>
 }
 
-function Roster({title,players,team,onName,onPosition,onPay,onToggle,onRemove,onAdd,onMove}:{title:string;players:Player[];team:"home"|"away";onName:(t:"home"|"away",i:number,n:string)=>void;onPosition:(t:"home"|"away",i:number,n:string)=>void;onPay:(t:"home"|"away",i:number)=>void;onToggle:(t:"home"|"away",i:number)=>void;onRemove:(t:"home"|"away",i:number)=>void;onAdd:(t:"home"|"away")=>void;onMove:(t:"home"|"away",from:number,to:number)=>void}) {
+function Roster({title,players,team,editable,onName,onPosition,onPay,onToggle,onRemove,onAdd,onMove}:{title:string;players:Player[];team:"home"|"away";editable:boolean;onName:(t:"home"|"away",i:number,n:string)=>void;onPosition:(t:"home"|"away",i:number,n:string)=>void;onPay:(t:"home"|"away",i:number)=>void;onToggle:(t:"home"|"away",i:number)=>void;onRemove:(t:"home"|"away",i:number)=>void;onAdd:(t:"home"|"away")=>void;onMove:(t:"home"|"away",from:number,to:number)=>void}) {
   const [dragFrom,setDragFrom]=useState<number|null>(null);
   const [dragOver,setDragOver]=useState<number|null>(null);
   const endDrag=()=>{setDragFrom(null);setDragOver(null);};
   const dropOn=(to:number)=>{if(dragFrom!==null&&dragFrom!==to)onMove(team,dragFrom,to);endDrag();};
   const labelFor=(p:Player,i:number)=>p.name.trim()||`player ${i+1}`;
+  const lockTitle = editable ? undefined : "Only that team's captain or the league owner can edit this roster.";
   return <section className="roster-card"><div className="card-title"><span>{team==="home"?"H":"V"}</span><h3>{title}</h3><small>{players.length} / 8 SPOTS</small></div>
+    {!editable&&<p className="roster-hint">View only — sign in as that team&apos;s captain or the owner to edit.</p>}
     {players.map((p,i)=><div
       className={`player-row ${p.active===false?"removed-player":""} ${dragFrom===i?"dragging":""} ${dragOver===i&&dragFrom!==null&&dragFrom!==i?"drag-over":""}`}
       key={i}
-      draggable
-      onDragStart={e=>{setDragFrom(i);e.dataTransfer.effectAllowed="move";}}
+      draggable={editable}
+      onDragStart={e=>{if(!editable)return;setDragFrom(i);e.dataTransfer.effectAllowed="move";}}
       onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect="move";setDragOver(i);}}
       onDragLeave={()=>setDragOver(o=>o===i?null:o)}
       onDrop={e=>{e.preventDefault();dropOn(i);}}
       onDragEnd={endDrag}
     ><div className="order-cell" title="Drag to reorder">
-        <button aria-label={`Move ${labelFor(p,i)} up`} disabled={i===0} onClick={()=>onMove(team,i,i-1)}><ChevronUp/></button>
+        <button aria-label={`Move ${labelFor(p,i)} up`} disabled={!editable||i===0} onClick={()=>onMove(team,i,i-1)}><ChevronUp/></button>
         <b>{i+1}</b>
-        <button aria-label={`Move ${labelFor(p,i)} down`} disabled={i===players.length-1} onClick={()=>onMove(team,i,i+1)}><ChevronDown/></button>
-      </div><div className="player-fields"><input aria-label={`${title} player ${i+1}`} value={p.name} onChange={e=>onName(team,i,e.target.value)}/><input aria-label={`${title} player ${i+1} position`} value={p.position} onChange={e=>onPosition(team,i,e.target.value)} placeholder="Position"/></div><button className={`status ${p.payment}`} onClick={()=>onPay(team,i)}>{labels[p.payment]}</button><button className="roster-toggle" onClick={()=>onToggle(team,i)}>{p.active===false?"Restore":"Remove"}</button>{p.active===false&&<button className="roster-remove" aria-label={`Delete ${labelFor(p,i)} from roster`} title="Delete from roster" onClick={()=>onRemove(team,i)}><X/></button>}</div>)}
-    <button className="add-roster-spot" onClick={()=>onAdd(team)}><Plus/> Add roster spot</button>
+        <button aria-label={`Move ${labelFor(p,i)} down`} disabled={!editable||i===players.length-1} onClick={()=>onMove(team,i,i+1)}><ChevronDown/></button>
+      </div><div className="player-fields"><input aria-label={`${title} player ${i+1}`} value={p.name} disabled={!editable} title={lockTitle} onChange={e=>onName(team,i,e.target.value)}/><input aria-label={`${title} player ${i+1} position`} value={p.position} disabled={!editable} title={lockTitle} onChange={e=>onPosition(team,i,e.target.value)} placeholder="Position"/></div><button className={`status ${p.payment}`} disabled={!editable} title={lockTitle ?? "Tap to move due → pending → paid"} onClick={()=>onPay(team,i)}>{labels[p.payment]}</button><button className="roster-toggle" disabled={!editable} title={lockTitle} onClick={()=>onToggle(team,i)}>{p.active===false?"Restore":"Remove"}</button>{p.active===false&&<button className="roster-remove" aria-label={`Delete ${labelFor(p,i)} from roster`} title={editable?"Delete from roster":lockTitle} disabled={!editable} onClick={()=>onRemove(team,i)}><X/></button>}</div>)}
+    <button className="add-roster-spot" disabled={!editable} title={lockTitle} onClick={()=>onAdd(team)}><Plus/> Add roster spot</button>
     {players.length>1&&<p className="roster-hint">Drag a row, or use the arrows, to set the match order.</p>}</section>;
 }
-function Payments({title,players,team,onPay,playerFee}:{title:string;players:Player[];team:"home"|"away";onPay:(t:"home"|"away",i:number)=>void;playerFee:number}) {
-  return <section className="payment-card"><h3>{title}</h3>{players.map((p,i)=><div className="payment-person" key={i}><span className="avatar">{p.name[0]||"?"}</span><div><strong>{p.name||`Player ${i+1}`}</strong><small>${playerFee} player fee when they play</small></div><button className={`status ${p.payment}`} onClick={()=>onPay(team,i)}>{labels[p.payment]}</button></div>)}</section>;
+function Payments({title,players,team,editable,playerFee,onPay,onCollect}:{title:string;players:Player[];team:"home"|"away";editable:boolean;playerFee:number;onPay:(t:"home"|"away",i:number)=>void;onCollect:(t:"home"|"away",i:number)=>void}) {
+  return <section className="payment-card"><h3>{title}</h3>{players.map((p,i)=><div className="payment-person" key={i}><span className="avatar">{p.name[0]||"?"}</span><div><strong>{p.name||`Player ${i+1}`}</strong><small>${playerFee} player fee when they play</small></div><button className={`status ${p.payment}`} disabled={!editable} title={editable?"Tap to move due → pending → paid":"Only that team's captain or the owner can change payments."} onClick={()=>onPay(team,i)}>{labels[p.payment]}</button>{editable&&p.payment!=="paid"&&<button className="quiet-button" title={`Collect $${playerFee} via Stripe`} onClick={()=>onCollect(team,i)} style={{fontSize:11}}>Collect</button>}</div>)}</section>;
 }

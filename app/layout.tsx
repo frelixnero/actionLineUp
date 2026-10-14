@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import "./calendar.css";
@@ -22,6 +22,12 @@ export const metadata: Metadata = {
   title: "Action Line-Up",
   description: "Automatic league lineups, live scoring, payments and fundraising in one place.",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+};
+
+// Explicit mobile viewport so phones never fall back to a scaled desktop view.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -35,6 +35,7 @@ type Props = {
   awayNames: string[];
   lineupId: string | null;
   raceTarget: number | null;
+  disabled?: boolean;
   onApply: (payload: ScanApplyPayload) => void;
 };
 
@@ -47,7 +48,7 @@ type Warning = { code: string; message: string; gameNumber?: number };
  * approval calls onApply, which the parent routes to publishLineup().
  */
 export default function ScorecardScanModal({
-  homeTeam, awayTeam, homeNames, awayNames, lineupId, raceTarget, onApply,
+  homeTeam, awayTeam, homeNames, awayNames, lineupId, raceTarget, disabled, onApply,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -180,7 +181,7 @@ export default function ScorecardScanModal({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <button className="scan-button"><Camera size={14} /> Scan score sheet</button>
+        <button className="scan-button" disabled={disabled} title={disabled ? "Only a team captain or the league owner can scan." : undefined}><Camera size={14} /> Scan score sheet</button>
       </DialogTrigger>
       <DialogContent className="scan-dialog" style={{ maxWidth: 980, maxHeight: "90vh", overflowY: "auto" }}>
         <DialogHeader>
@@ -225,7 +226,7 @@ export default function ScorecardScanModal({
                 ))}
               </div>
             )}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 12 }}>
+    <div className="scan-review-grid">
               <div>
                 {shownImage ? (
                   <>
